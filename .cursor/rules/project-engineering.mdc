@@ -1,0 +1,86 @@
+---
+description: Production-oriented Databricks Medallion Architecture assessment — engineering standards and workflow
+alwaysApply: true
+---
+
+# Databricks Medallion Pipeline — Project Engineering Rules
+
+This is a **production-oriented Databricks Medallion Architecture assessment** project.
+
+## Technology Stack
+
+- Databricks
+- PySpark
+- Python
+- Spark SQL
+- Delta Lake
+- Git / GitHub
+
+## Target Architecture
+
+Implement the pipeline end-to-end:
+
+```
+Source CSVs → Bronze → Silver → Gold → Databricks SQL Dashboard
+```
+
+## Medallion Layer Responsibilities
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Bronze** | Ingest raw data with minimal transformation; preserve source fidelity |
+| **Silver** | Validation, cleansing, and data quality processing |
+| **Gold** | Business-ready aggregations and curated datasets for analytics |
+| **Dashboard** | Databricks SQL Dashboard consuming Gold-layer outputs |
+
+## Engineering Principles
+
+1. **Understand requirements before implementing.** Clarify scope, inputs, outputs, and acceptance criteria first.
+2. **Work incrementally.** Do not generate the entire project in one step; build and validate layer by layer.
+3. **Explain important engineering decisions.** Document trade-offs, patterns chosen, and rationale.
+4. **Identify ambiguities.** Surface unclear or missing requirements rather than silently inventing them.
+5. **Follow Medallion Architecture principles.** Respect layer boundaries and data flow direction.
+6. **Keep Bronze raw.** Apply only ingestion-level changes (e.g., metadata columns, schema capture).
+7. **Validate in Silver.** Perform data quality checks, deduplication, and cleansing here.
+8. **Aggregate in Gold.** Create business-ready, consumption-optimized datasets.
+9. **Preserve traceability of invalid records.** Quarantine or flag bad records; never silently discard them.
+10. **Avoid silently deleting bad data.** Log, count, and route invalid records to a quarantine or audit path.
+11. **Write modular, readable, maintainable code.** Small functions, clear naming, separation of concerns.
+12. **Prefer Spark-native operations.** Use DataFrame API, Spark SQL, and Delta Lake for distributed processing.
+13. **Include appropriate error handling.** Fail loudly with context; handle expected edge cases explicitly.
+14. **Include meaningful tests.** Cover transformations, validation logic, and edge cases.
+15. **Validate AI-generated code** before considering any task complete (lint, run tests, sanity-check outputs).
+16. **Never introduce credentials, secrets, API keys, or real customer data.** Use placeholders and secure configuration patterns.
+17. **Avoid unnecessary complexity.** Prefer the simplest correct solution; do not over-engineer.
+
+## Workflow for Significant Tasks
+
+For non-trivial work (new layers, schema changes, validation rules, dashboard design):
+
+1. **Analyze** the requirement and identify ambiguities.
+2. **Propose** an approach (architecture, data model, file layout) before implementing.
+3. **Implement** incrementally with tests.
+4. **Validate** the result and summarize what changed and why.
+
+## AI Capability Assessment Dimensions
+
+This project evaluates how AI is used across the full lifecycle. Apply deliberate, transparent AI assistance in:
+
+- Requirement analysis
+- Architecture
+- Data modeling
+- Data generation
+- Implementation
+- Testing
+- Debugging
+- Code review
+- Documentation
+- Reflection
+
+When using AI, show reasoning, call out assumptions, and verify outputs rather than accepting them blindly.
+
+## Scope Discipline
+
+- Do not modify unrelated files.
+- Do not create pipeline code unless explicitly requested for the current task.
+- Match existing project conventions when they exist.

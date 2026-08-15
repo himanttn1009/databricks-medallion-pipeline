@@ -1,0 +1,2 @@
+# Dependencies for src/data_generation/generate_sample_data.py
+Faker==40.36.0

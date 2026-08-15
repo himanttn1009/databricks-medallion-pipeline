@@ -1,0 +1,5 @@
+-- Database Schema
+-- Databricks Medallion Pipeline
+--
+-- To be defined during implementation.
+-- See data-model.md for entity definitions.
