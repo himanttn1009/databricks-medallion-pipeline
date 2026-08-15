@@ -110,68 +110,305 @@ A **batch medallion pipeline** on Databricks integrating three e-commerce CSV so
 
 ---
 
-## 3. Bronze Layer
+## Bronze Layer Design
 
-### 3.1 Responsibilities
+> **Status:** Design approved; not yet implemented or tested.  
+> **Inputs:** Approved Bronze Layer Design Specification, `data-model.md`, `DATA_GENERATION_NOTES.md` (runtime validation results), assignment Bronze requirements.  
+> **Implementation:** `src/bronze/` (planned)
 
-1. Read CSVs from configured DBFS (or S3) paths.
-2. Apply **explicit schemas** with correct data types.
-3. Write to Delta Bronze tables using **overwrite** or **append** per run configuration.
-4. Add ingestion metadata columns.
-5. Log row counts and ingest timestamp to an audit table.
-6. Perform **no** cleansing, deduplication, joins, or quality filtering.
+### 1. Architecture
 
-### 3.2 Bronze tables
+Bronze is the raw landing layer between offline CSV sources and Silver validation.
 
-| Table | Source CSV | Primary key (logical) |
-|-------|------------|----------------------|
+```
+data/*.csv  ──upload──►  DBFS landing zone
+                              │
+                              ▼
+              ┌───────────────────────────────────┐
+              │  PySpark Bronze ingestion          │
+              │  01_ingest_customers.py            │
+              │  02_ingest_orders.py               │
+              │  03_ingest_products.py             │
+              │  ingest_all.py (orchestrator)      │
+              └───────────────┬───────────────────┘
+                              │
+              ┌───────────────┴───────────────────┐
+              ▼                                   ▼
+     bronze.customers                    audit.ingestion_log
+     bronze.products                    (append run events)
+     bronze.orders
+              │
+              ▼
+         Silver layer (reads bronze.*; adds DQ columns)
+```
+
+**Flow:** CSV → DBFS landing → PySpark ingestion → Bronze Delta tables → Silver.
+
+Bronze performs **ingestion and persistence only**. Silver reads Bronze tables unchanged (plus metadata) and owns all data quality detection and flagging.
+
+### 2. Bronze Responsibilities
+
+**Bronze performs only:**
+
+| Responsibility | Detail |
+|----------------|--------|
+| Source ingestion | Read CSV from configured DBFS paths |
+| Explicit type parsing | Apply defined Spark `StructType` per entity |
+| Empty CSV field → NULL | `nullValue=""` and nullable schema fields |
+| Ingestion metadata | Add `_ingest_timestamp`, `_source_file`, `_ingest_batch_id` |
+| Schema/header validation | Verify expected columns present; reject extra/missing headers |
+| Row-count validation | Fatal check against expected entity row counts |
+| Delta persistence | Write managed Delta tables in schema `bronze` |
+| Ingestion audit logging | Append run events to `audit.ingestion_log` |
+
+**Bronze does NOT perform:**
+
+| Excluded | Owner |
+|----------|-------|
+| Deduplication | Silver (uniqueness checks) |
+| NULL repair | Silver |
+| Foreign-key validation | Silver (referential integrity) |
+| Filtering bad records | Silver / Gold (`is_valid` filter) |
+| Quality flags (`quality_check_result`, `is_valid`) | Silver |
+| Business transformations | Silver / Gold |
+| Aggregations | Gold |
+
+### 3. Source Files
+
+| Source CSV | Expected rows | Bronze table |
+|------------|---------------|--------------|
+| `customers.csv` | **10,000** | `bronze.customers` |
+| `products.csv` | **500** | `bronze.products` |
+| `orders.csv` | **100,000** | `bronze.orders` |
+
+Local repo copies live in `data/`; files are uploaded to DBFS before Bronze ingestion. Row counts are validated at runtime against these expected values (confirmed by data generation runtime validation).
+
+### 4. Storage
+
+**Assessment DBFS landing path (default, configurable):**
+
+```
+dbfs:/FileStore/medallion_pipeline/data/
+```
+
+| File | Default path |
+|------|--------------|
+| `customers.csv` | `dbfs:/FileStore/medallion_pipeline/data/customers.csv` |
+| `products.csv` | `dbfs:/FileStore/medallion_pipeline/data/products.csv` |
+| `orders.csv` | `dbfs:/FileStore/medallion_pipeline/data/orders.csv` |
+
+| | |
+|---|---|
+| **Decision** | DBFS as the assessment landing zone |
+| **Reason** | Assignment allows S3/DBFS; no external credentials required; aligns with existing architecture notes |
+| **Alternative considered** | Unity Catalog Volumes, external S3 |
+| **Why chosen** | Lowest setup friction for the assessment workflow |
+
+Paths are defined in a shared `config` module and **must be configurable** (constants with override via Spark config or environment variables). Do **not** hardcode paths in every ingest script.
+
+> **Note:** DBFS is the chosen assessment pattern. **Community Edition or specific workspace feature availability is not guaranteed** — verify in your Databricks environment before running.
+
+**Bronze table format:** Delta Lake, schema `bronze`, no partitioning at assessment scale.
+
+### 5. Bronze Tables
+
+| Table | Source | Logical primary key |
+|-------|--------|---------------------|
 | `bronze.customers` | `customers.csv` | `customer_id` |
-| `bronze.orders` | `orders.csv` | `order_id` |
 | `bronze.products` | `products.csv` | `product_id` |
+| `bronze.orders` | `orders.csv` | `order_id` |
 
-### 3.3 Metadata columns (Bronze only addition to source)
+Write mode: **overwrite** per table per full pipeline run (see Section 11).
+
+### 6. Explicit Schemas
+
+Bronze uses **explicit Spark schemas** — not `inferSchema=True` — for reliable typing and early structural drift detection. All business columns are nullable at the schema level to preserve raw fidelity (including intentional defects).
+
+**`bronze.customers` — business columns**
+
+| Column | Spark type |
+|--------|------------|
+| `customer_id` | `IntegerType` |
+| `customer_name` | `StringType` |
+| `email` | `StringType` (nullable) |
+| `country` | `StringType` |
+| `signup_date` | `DateType` |
+| `customer_segment` | `StringType` |
+| `lifetime_value` | `DecimalType(18, 2)` |
+
+**`bronze.products` — business columns**
+
+| Column | Spark type |
+|--------|------------|
+| `product_id` | `IntegerType` |
+| `product_name` | `StringType` |
+| `category` | `StringType` |
+| `price` | `DecimalType(18, 2)` |
+| `cost` | `DecimalType(18, 2)` |
+| `stock_quantity` | `IntegerType` |
+| `reorder_level` | `IntegerType` |
+
+**`bronze.orders` — business columns**
+
+| Column | Spark type |
+|--------|------------|
+| `order_id` | `IntegerType` |
+| `customer_id` | `IntegerType` (nullable) |
+| `order_date` | `DateType` |
+| `product_id` | `IntegerType` (nullable) |
+| `quantity` | `IntegerType` |
+| `unit_price` | `DecimalType(18, 2)` |
+| `total_amount` | `DecimalType(18, 2)` |
+| `order_status` | `StringType` |
+| `payment_date` | `DateType` (nullable) |
+
+**Header validation:** Explicit `StructType` alone does not reject unexpected CSV columns. Bronze ingest **must explicitly validate the CSV header row** against the expected column list before or during read, and fail fast on missing or extra columns.
+
+### 7. Metadata
+
+**Row-level metadata** (appended to every Bronze entity table):
+
+| Column | Spark type | Purpose |
+|--------|------------|---------|
+| `_ingest_timestamp` | `TimestampType` | When the entity was ingested (`current_timestamp()`) |
+| `_source_file` | `StringType` | Configured source path (e.g. DBFS CSV path) |
+| `_ingest_batch_id` | `StringType` | Shared run identifier for the Bronze pipeline execution |
+
+**Run-level audit table:** `audit.ingestion_log` (append-only, intentionally simple)
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `_ingest_timestamp` | TIMESTAMP | When the file was ingested |
-| `_source_file` | STRING | Source CSV path/name |
-| `_ingest_batch_id` | STRING | Run identifier (e.g., UUID or date-based) |
+| `run_id` | STRING | Same value as `_ingest_batch_id` |
+| `layer` | STRING | `bronze` |
+| `entity` | STRING | `customers`, `orders`, `products` |
+| `status` | STRING | `SUCCESS` or `FAILED` |
+| `row_count` | BIGINT | Rows written for the entity |
+| `source_path` | STRING | Input CSV path |
+| `target_table` | STRING | e.g. `bronze.customers` |
+| `message` | STRING | Summary or error detail |
+| `run_timestamp` | TIMESTAMP | When the audit row was written |
 
-| | |
-|---|---|
-| **Decision** | Add three metadata columns to every Bronze table |
-| **Reason** | Assignment requires ingestion metadata; project rules allow minimal ingestion-level additions |
-| **Alternative considered** | Separate audit-only table with no row-level metadata |
-| **Why chosen** | Row-level metadata supports traceability without transforming business columns; audit table still captures run-level summary |
+One audit row per entity ingest per run. No additional production observability infrastructure is required for the assessment.
 
-### 3.4 Schema handling
+### 8. NULL Contract
 
-| | |
-|---|---|
-| **Decision** | **Explicit schema** defined in shared config/module; disable permissive column dropping |
-| **Reason** | Assignment requires schema inference and data types; explicit schema is more reliable than inference alone |
-| **Alternative considered** | Pure `inferSchema=True` |
-| **Why chosen** | Explicit schema catches structural drift early, documents the contract, and still satisfies type-handling requirement |
+Layer contract from data generation through Bronze:
 
-### 3.5 Bronze scripts
+```
+Python None  →  empty CSV field  →  Spark NULL  →  Delta NULL
+```
 
-| Script | Purpose |
-|--------|---------|
-| `01_ingest_customers.py` | Ingest customers |
-| `02_ingest_orders.py` | Ingest orders |
-| `03_ingest_products.py` | Ingest products |
-| `ingest_all.py` | Orchestrate all three ingests and audit logging |
+| Rule | Detail |
+|------|--------|
+| CSV read | `nullValue=""` maps empty fields to Spark NULL |
+| Bronze write | Do **not** replace NULLs with empty strings, zeros, or sentinel values |
+| Downstream | Silver completeness checks evaluate true SQL NULLs |
 
-### 3.6 Bronze write mode
+Bronze must not `coalesce` NULL FKs, emails, or payment dates to defaults.
 
-| | |
-|---|---|
-| **Decision** | **Full overwrite** per table for assessment runs (`mode("overwrite")`) |
-| **Reason** | Simplest idempotent re-run for CE development and README walkthrough |
-| **Alternative considered** | Append with partition by ingest date |
-| **Why chosen** | Dataset is small; assessment needs clean re-runs without merge complexity. Production would use append + partition. |
+### 9. Data Quality Preservation
 
-> **Assumption:** Assessment runs are full refresh, not incremental daily append.
+Generated source CSVs contain **intentional defects** for Silver validation. Bronze must **preserve every defect row and value** — no silent filtering.
+
+| Defect | Expected count | Bronze behavior |
+|--------|----------------|-----------------|
+| NULL `email` | 50 | Load as NULL |
+| Duplicate `customer_id` participant rows | 10 (5 pairs) | Load all rows; no dedup |
+| NULL order `customer_id` | 100 | Load as NULL |
+| NULL order `product_id` | 200 | Load as NULL |
+| Orphan `customer_id` | 50 | Load ghost IDs (90,001–90,050) as-is |
+| Orphan `product_id` | 30 | Load ghost IDs (901–930) as-is |
+| Duplicate `order_id` participant rows | 20 (10 pairs) | Load all rows; no dedup |
+
+**Total explicit defect-participating rows: 460.** Bronze does not validate these counts — Silver owns defect detection and metrics.
+
+### 10. Validation
+
+Bronze validation is **structural and operational only**. Silver data quality checks are **not** performed in Bronze.
+
+| Validation | When | On failure |
+|------------|------|------------|
+| Source existence | Pre-read | Fatal — missing CSV on configured path |
+| Header/schema validation | Pre-read / read | Fatal — missing or extra columns vs expected schema |
+| Row-count validation | Post-read, pre-write | Fatal — count ≠ expected |
+| Parsing / malformed records | Read (`FAILFAST` or equivalent) | Fatal — corrupt row |
+| Post-write row-count check | After Delta write | Fatal — written count ≠ expected |
+
+**Expected row counts:**
+
+| Entity | Expected |
+|--------|----------|
+| customers | **10,000** |
+| products | **500** |
+| orders | **100,000** |
+
+Row-count mismatch indicates wrong file, incomplete upload, or ingest error — not a row-level DQ issue to absorb.
+
+### 11. Rerun Strategy
+
+| Aspect | Behavior |
+|--------|----------|
+| Bronze table write mode | **Overwrite** (`mode("overwrite")`) — full refresh per run |
+| Batch identity | New `_ingest_batch_id` / `run_id` on every orchestrated run |
+| Audit log | **Append** to `audit.ingestion_log` — run history preserved |
+| Source CSV on DBFS | Unchanged unless operator re-uploads |
+
+Rerunning `ingest_all.py` replaces Bronze table contents idempotently for assessment re-runs. Metadata timestamps will differ per run.
+
+### 12. Error Handling
+
+| Category | Examples | Handling |
+|----------|----------|----------|
+| **Fatal** | Missing source file; invalid header/schema; malformed CSV row; row-count mismatch; Delta write failure | Stop ingest; log `FAILED` to `audit.ingestion_log`; raise with actionable message; non-zero exit |
+| **Non-fatal** | NULL values; duplicate IDs; orphan foreign keys | **Ingest the row unchanged** — Silver detects and flags |
+
+Fail fast on infrastructure and contract errors; never stop ingestion because a row is "bad" from a DQ perspective.
+
+### 13. Implementation Structure
+
+```
+src/bronze/
+├── config.py              # paths, expected row counts, table names
+├── schemas.py             # explicit StructType per entity
+├── ingest_utils.py        # read, validate, metadata, write, audit helpers
+├── 01_ingest_customers.py
+├── 02_ingest_orders.py
+├── 03_ingest_products.py
+└── ingest_all.py          # orchestrator: batch ID, run all ingests, audit
+```
+
+| File | Role |
+|------|------|
+| `config.py` | Configurable DBFS paths, expected counts, schema/table constants |
+| `schemas.py` | Spark schemas for customers, products, orders |
+| `ingest_utils.py` | Shared ingest pipeline (no Silver DQ logic) |
+| `01`–`03` | Thin entity entry points |
+| `ingest_all.py` | Creates shared batch ID; runs ingests; fail-fast on error |
+
+No implementation code in this document — structure only.
+
+### 14. Engineering Decisions
+
+| ID | Decision | Rationale |
+|----|----------|-----------|
+| **BD-01** | DBFS landing for assessment CSVs | Assignment allows DBFS; configurable paths; no external credentials |
+| **BD-02** | Explicit schemas, not inference | Stable types; documents contract; catches drift |
+| **BD-03** | Delta Bronze tables | Project standard; ACID overwrite for reruns |
+| **BD-04** | Overwrite per run | Idempotent full refresh at assessment scale |
+| **BD-05** | Separate entity scripts + `ingest_all.py` orchestrator | Matches assignment repo layout; supports incremental development and testing |
+| **BD-06** | Bronze does not perform DQ | Preserves 460 intentional defects for Silver; clear layer boundary |
+| **BD-07** | Explicit CSV header validation | StructType alone does not reject extra/missing columns |
+| **BD-08** | Simple `audit.ingestion_log` | Meets assignment metadata requirement without extra infrastructure |
+| **BD-09** | Configurable input paths | Avoid hardcoding; support environment differences |
+| **BD-10** | Fatal row-count validation | Protects Silver tests that expect exact defect populations |
+
+**Constraints applied:**
+
+- Do not claim Community Edition availability as guaranteed.
+- Input paths must be configurable.
+- Header validation is explicit, not assumed from schema read alone.
+- Audit design stays minimal — no production observability stack.
+- No unnecessary production infrastructure (streaming, MERGE ingest, partitioning) at Bronze.
 
 ---
 
