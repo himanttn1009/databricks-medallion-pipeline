@@ -58,11 +58,28 @@ def ensure_schemas_exist(spark: SparkSession) -> None:
 
 
 def _path_exists(spark: SparkSession, path: str) -> bool:
-    """Check whether a Hadoop-compatible path exists."""
-    jvm = spark._jvm
-    hadoop_path = jvm.org.apache.hadoop.fs.Path(path)
-    fs = hadoop_path.getFileSystem(spark._jsc.hadoopConfiguration())
-    return fs.exists(hadoop_path)
+    """
+    Check whether a path exists using Spark Connect-compatible APIs.
+
+    Spark Connect (Databricks Serverless) does not expose spark._jvm or spark._jsc.
+    """
+    try:
+        spark.read.format("text").load(path).limit(1).collect()
+        return True
+    except Exception as exc:
+        message = str(exc).lower()
+        if any(
+            marker in message
+            for marker in (
+                "path does not exist",
+                "does not exist",
+                "file not found",
+                "no such file",
+                "cannot find",
+            )
+        ):
+            return False
+        raise
 
 
 def _validate_source_exists(spark: SparkSession, entity: str, source_path: str) -> None:
