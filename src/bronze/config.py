@@ -24,11 +24,12 @@ LAYER_BRONZE: Final[str] = "bronze"
 # Source paths (configurable via environment variable)
 # ---------------------------------------------------------------------------
 
-DEFAULT_DBFS_INPUT_BASE: Final[str] = "dbfs:/FileStore/medallion_pipeline/data"
+# Unity Catalog managed volume (Databricks Free Edition default landing zone).
+DEFAULT_DBFS_INPUT_BASE: Final[str] = "/Volumes/workspace/default/medallion_data"
 
 
 def get_dbfs_input_base() -> str:
-    """Return the DBFS base path for source CSV files."""
+    """Return the source CSV base path (Unity Catalog Volume or override)."""
     return os.environ.get("MEDALLION_DBFS_INPUT_BASE", DEFAULT_DBFS_INPUT_BASE).rstrip("/")
 
 

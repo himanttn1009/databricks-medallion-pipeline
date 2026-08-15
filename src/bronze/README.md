@@ -5,7 +5,7 @@ Raw CSV ingestion into Delta Lake tables with minimal transformation. Bronze pre
 ## Overview
 
 ```
-dbfs:/FileStore/medallion_pipeline/data/*.csv
+/Volumes/workspace/default/medallion_data/*.csv
         │
         ▼
   ingest_utils.py  (shared validation + read + metadata + write)
@@ -19,57 +19,65 @@ dbfs:/FileStore/medallion_pipeline/data/*.csv
 
 ## Prerequisites
 
-- Databricks cluster with **PySpark** and **Delta Lake** (standard on Databricks Runtime)
-- Source CSV files uploaded to DBFS (see below)
-- Cluster can read DBFS paths and write Delta tables to the Hive metastore
+- Databricks **Free Edition** with **Unity Catalog** enabled
+- Cluster with **PySpark** and **Delta Lake** (standard on Databricks Runtime)
+- Source CSV files in the Unity Catalog managed volume (see below)
+- Read access to the volume; write access to create/update `bronze` and `audit` schemas/tables
 
 No additional Python packages are required beyond the Databricks runtime.
 
-## Upload Source CSVs to DBFS
+## Source CSV Location — Unity Catalog Volume
 
-Upload the generated files from the repository `data/` directory:
+The Bronze layer reads from the managed volume:
 
-| Local file | DBFS destination |
-|------------|------------------|
-| `data/customers.csv` | `dbfs:/FileStore/medallion_pipeline/data/customers.csv` |
-| `data/products.csv` | `dbfs:/FileStore/medallion_pipeline/data/products.csv` |
-| `data/orders.csv` | `dbfs:/FileStore/medallion_pipeline/data/orders.csv` |
-
-### Option A — Databricks UI
-
-1. Open **Data** → **DBFS** (or **Workspace** file browser).
-2. Create folder: `/FileStore/medallion_pipeline/data/`
-3. Upload `customers.csv`, `products.csv`, and `orders.csv`.
-
-### Option B — Databricks CLI
-
-```bash
-databricks fs mkdirs dbfs:/FileStore/medallion_pipeline/data
-databricks fs cp data/customers.csv dbfs:/FileStore/medallion_pipeline/data/customers.csv
-databricks fs cp data/products.csv dbfs:/FileStore/medallion_pipeline/data/products.csv
-databricks fs cp data/orders.csv dbfs:/FileStore/medallion_pipeline/data/orders.csv
+```
+/Volumes/workspace/default/medallion_data/
 ```
 
-### Option C — Notebook `dbutils`
+Expected files:
+
+| File | Full path |
+|------|-----------|
+| `customers.csv` | `/Volumes/workspace/default/medallion_data/customers.csv` |
+| `products.csv` | `/Volumes/workspace/default/medallion_data/products.csv` |
+| `orders.csv` | `/Volumes/workspace/default/medallion_data/orders.csv` |
+
+### Option A — Databricks UI (Catalog Explorer)
+
+1. Open **Catalog** → **workspace** → **default** → **Volumes** → **medallion_data**.
+2. Upload `customers.csv`, `products.csv`, and `orders.csv` from the repository `data/` directory.
+
+### Option B — Notebook `dbutils`
 
 ```python
-dbutils.fs.mkdirs("dbfs:/FileStore/medallion_pipeline/data")
-# After uploading to a temporary workspace path:
-dbutils.fs.cp("file:/path/to/customers.csv", "dbfs:/FileStore/medallion_pipeline/data/customers.csv")
+volume_path = "/Volumes/workspace/default/medallion_data"
+
+# After uploading CSVs to a temporary workspace path:
+dbutils.fs.cp("file:/path/to/customers.csv", f"{volume_path}/customers.csv")
+dbutils.fs.cp("file:/path/to/products.csv", f"{volume_path}/products.csv")
+dbutils.fs.cp("file:/path/to/orders.csv", f"{volume_path}/orders.csv")
 ```
+
+### Option C — Verify files are present
+
+```python
+display(dbutils.fs.ls("/Volumes/workspace/default/medallion_data"))
+```
+
+You should see `customers.csv`, `products.csv`, and `orders.csv`.
 
 ## Configurable Input Path
 
-Default DBFS base path: `dbfs:/FileStore/medallion_pipeline/data/`
+Default source base path: `/Volumes/workspace/default/medallion_data/`
 
-Override via environment variable before running:
+Override via environment variable before running (same mechanism as before):
 
 ```python
 import os
-os.environ["MEDALLION_DBFS_INPUT_BASE"] = "dbfs:/FileStore/medallion_pipeline/data"
+os.environ["MEDALLION_DBFS_INPUT_BASE"] = "/Volumes/workspace/default/medallion_data"
 ```
 
-Or set on the cluster as a Spark environment variable / job parameter.
+Or set `MEDALLION_DBFS_INPUT_BASE` on the cluster as an environment variable / job parameter.
 
 Entity source paths are derived in `config.py` — do not hardcode paths in individual scripts.
 
@@ -97,7 +105,7 @@ Each table contains:
 
 - All source business columns (unchanged, nullable)
 - `_ingest_timestamp` — entity-level ingestion timestamp
-- `_source_file` — configured DBFS source path
+- `_source_file` — configured volume source path
 - `_ingest_batch_id` — shared run identifier (one per `ingest_all.py` run)
 
 Tables are **Delta**, **overwrite** mode, **not partitioned**.
@@ -113,7 +121,7 @@ Tables are **Delta**, **overwrite** mode, **not partitioned**.
 | `entity` | `customers`, `orders`, or `products` |
 | `status` | `SUCCESS` or `FAILED` |
 | `row_count` | Rows ingested (null on failure) |
-| `source_path` | DBFS CSV path |
+| `source_path` | Volume CSV path |
 | `target_table` | Fully qualified Bronze table |
 | `message` | Success or error summary |
 | `run_timestamp` | Entity ingestion timestamp |
@@ -225,7 +233,7 @@ Failures include context: entity name, source path, target table, and expected v
 
 | Error | Cause |
 |-------|-------|
-| Source file missing | CSV not uploaded to configured DBFS path |
+| Source file missing | CSV not present in configured volume path |
 | Empty source file | Zero-byte or header-only file |
 | Header mismatch | Column names differ, extra/missing columns, or column order differs from schema |
 | Malformed CSV | Unparseable values (`FAILFAST`) |
