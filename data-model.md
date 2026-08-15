@@ -197,7 +197,7 @@ products  (1) ──────< orders (many)
 | `bronze.orders` | `bronze.customers` | No join in Bronze — stored independently |
 | `silver.orders` | `silver.customers` | RI check: `customer_id` exists in valid parent set |
 | `silver.orders` | `silver.products` | RI check: `product_id` exists in valid parent set |
-| Gold aggregations | `silver.orders` + dimensions | Join on FKs; filter `is_valid = true` and `order_status = 'Completed'` *(assumption)* |
+| Gold aggregations | `silver.orders` + dimensions | Join on FKs; filter `is_valid = true` and `order_status = 'Completed'` (DA-07) |
 
 ---
 
@@ -369,60 +369,69 @@ Type-validation future-date rules use fixed **`REFERENCE_DATE = 2026-08-15`** (n
 
 ## 10. Gold Schema
 
-Gold tables are **aggregated** datasets built from valid Silver data (`is_valid = true`). Format: **Delta Lake** in schema `gold`.
+Gold tables are **aggregated** datasets built from valid Silver data (`is_valid = true`). Format: **Delta Lake** in schema `gold`. Write mode: **overwrite** per run.
 
-**Common Gold filter *(assumption)*:** `order_status = 'Completed'` for all revenue and order-count metrics.
+**Qualifying order filter (finalized):** `silver.orders.is_valid = true` AND `order_status = 'Completed'` for all revenue and order-count metrics (DA-07).
+
+**Implementation:** PySpark/DataFrame APIs (GD-10); Spark Connect compatible.
 
 ### 10.1 `gold.sales_by_product`
 
-**Grain:** One row per product with at least one completed valid order *(products with zero orders may be omitted or included with zeros — implementation choice)*.
+**Grain:** One row per `product_id` with at least one qualifying completed-valid order (GD-01 — products with zero qualifying orders omitted).
 
 | Column | Type | Origin | Nullable | Business meaning |
 |--------|------|--------|----------|------------------|
 | `product_id` | INT | *(source via Silver)* | No | Product identifier |
 | `product_name` | STRING | *(source via Silver)* | No | Product name |
 | `category` | STRING | *(source via Silver)* | No | Product category |
-| `total_orders` | BIGINT | *(Gold derived)* | No | `COUNT(DISTINCT order_id)` for completed valid orders |
-| `total_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | `SUM(total_amount)` for completed valid orders |
-| `avg_order_value` | DECIMAL(18,2) | *(Gold derived)* | No | `total_revenue / total_orders` |
+| `total_orders` | BIGINT | *(Gold derived)* | No | `COUNT(DISTINCT order_id)` for qualifying orders |
+| `total_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | `SUM(total_amount)` for qualifying orders |
+| `avg_order_value` | DECIMAL(18,2) | *(Gold derived)* | No | `total_revenue / total_orders`, rounded to 2 dp (GD-08) |
+
+**Join rule:** Qualifying orders inner-joined to valid `silver.products` (GD-02, GD-13).
 
 ### 10.2 `gold.revenue_by_customer`
 
-**Grain:** One row per customer with valid Silver record *(includes customers with zero completed orders — needed for Inactive segmentation)*.
+**Grain:** One row per valid `customer_id` in `silver.customers` (includes customers with zero qualifying orders — required for Inactive segmentation).
 
 | Column | Type | Origin | Nullable | Business meaning |
 |--------|------|--------|----------|------------------|
 | `customer_id` | INT | *(source via Silver)* | No | Customer identifier |
 | `customer_name` | STRING | *(source via Silver)* | No | Customer name |
 | `customer_segment` | STRING | *(source via Silver)* | No | Marketing segment: `Premium`, `Standard`, `Basic` |
-| `country` | STRING | *(source via Silver)* | No | Customer country; denormalized for dashboard filter *(assumption)* |
-| `total_orders` | BIGINT | *(Gold derived)* | No | `COUNT(DISTINCT order_id)` for completed valid orders |
-| `total_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | `SUM(total_amount)` for completed valid orders |
-| `avg_order_value` | DECIMAL(18,2) | *(Gold derived)* | Yes | `total_revenue / total_orders`; null when `total_orders = 0` |
-| `lifetime_value_actual` | DECIMAL(18,2) | *(Gold derived)* | No | `SUM(total_amount)` of completed valid orders; pipeline-computed actual LTV |
+| `total_orders` | BIGINT | *(Gold derived)* | No | `COUNT(DISTINCT order_id)`; 0 when no qualifying orders (GD-11) |
+| `total_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | `SUM(total_amount)`; 0.00 when no qualifying orders (GD-11) |
+| `avg_order_value` | DECIMAL(18,2) | *(Gold derived)* | Yes | `total_revenue / total_orders`, rounded 2 dp; **null** when `total_orders = 0` (GD-11) |
+| `lifetime_value_actual` | DECIMAL(18,2) | *(Gold derived)* | No | Equals `total_revenue`; 0.00 when no qualifying orders (GD-11) |
+
+**Customer revenue base:** valid `silver.customers` LEFT JOIN qualifying orders (with valid product when attributing order revenue).
+
+> **GD-07:** `country` is **not** a Gold column. Assignment §8.B does not require it.
 
 ### 10.3 `gold.customer_segmentation`
 
-**Grain:** One row per behavioral `segment_type`.
+**Grain:** One row per non-empty behavioral `segment_type` (GD-03 — empty buckets omitted).
 
 | Column | Type | Origin | Nullable | Business meaning |
 |--------|------|--------|----------|------------------|
-| `segment_type` | STRING | *(Gold derived)* | No | `High-Value`, `Repeat`, `One-Time`, or `Inactive` *(assumption — rules in Section 11)* |
+| `segment_type` | STRING | *(Gold derived)* | No | `High-Value`, `Repeat`, `One-Time`, or `Inactive` |
 | `customer_count` | BIGINT | *(Gold derived)* | No | Number of customers in the segment |
-| `avg_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | Average `total_revenue` across customers in segment |
-| `total_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | Sum of `total_revenue` across customers in segment |
+| `avg_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | Average per-customer `total_revenue` in segment |
+| `total_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | Sum of per-customer `total_revenue` in segment |
+
+Derived from the **complete valid-customer population** (including zero-order customers).
 
 ### 10.4 `gold.daily_weekly_trends`
 
-**Grain:** One row per date (daily) or per week (weekly).
+**Grain:** One row per `(period_type, period_start)` in a single table (GD-14).
 
 | Column | Type | Origin | Nullable | Business meaning |
 |--------|------|--------|----------|------------------|
-| `order_date` | DATE | *(Gold derived)* | Yes | Specific date for daily rows; null for weekly summary rows *(or same as period_start — implementation detail)* |
+| `order_date` | DATE | *(Gold derived)* | Yes | Populated for `DAILY` rows; **NULL** for `WEEKLY` rows (GD-04) |
 | `period_type` | STRING | *(Gold derived)* | No | `DAILY` or `WEEKLY` |
-| `period_start` | DATE | *(Gold derived)* | No | Start date of the period; for weekly rows, Monday of the calendar week *(assumption)* |
-| `total_orders` | BIGINT | *(Gold derived)* | No | Count of completed valid orders in period |
-| `total_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | Sum of `total_amount` for completed valid orders in period |
+| `period_start` | DATE | *(Gold derived)* | No | Period anchor; Monday-start week for `WEEKLY` (GD-05) |
+| `total_orders` | BIGINT | *(Gold derived)* | No | Count of qualifying orders in period |
+| `total_revenue` | DECIMAL(18,2) | *(Gold derived)* | No | Sum of `total_amount` for qualifying orders in period |
 
 ---
 
@@ -450,19 +459,18 @@ Gold tables are **aggregated** datasets built from valid Silver data (`is_valid 
 
 | Field | Table | Derivation |
 |-------|-------|------------|
-| `total_orders` | `sales_by_product`, `revenue_by_customer` | `COUNT(DISTINCT order_id)` on completed valid orders |
-| `total_revenue` | All Gold tables | `SUM(total_amount)` on completed valid orders |
-| `avg_order_value` | `sales_by_product`, `revenue_by_customer` | `total_revenue / total_orders` |
-| `lifetime_value_actual` | `revenue_by_customer` | `SUM(total_amount)` per customer from completed valid orders |
-| `segment_type` | `customer_segmentation` | Behavioral classification *(assumption)*: |
-| | | **Inactive** — 0 completed valid orders |
-| | | **One-Time** — exactly 1 completed valid order |
-| | | **Repeat** — ≥2 completed valid orders AND `total_revenue < P75 threshold` |
-| | | **High-Value** — ≥2 completed valid orders AND `total_revenue >= P75 threshold` |
-| `customer_count` | `customer_segmentation` | `COUNT(customer_id)` per `segment_type` |
+| `total_orders` | `sales_by_product`, `revenue_by_customer` | `COUNT(DISTINCT order_id)` on qualifying orders |
+| `total_revenue` | All Gold tables | `SUM(total_amount)` on qualifying orders |
+| `avg_order_value` | `sales_by_product`, `revenue_by_customer` | `total_revenue / total_orders`, `DECIMAL(18,2)` rounded (GD-08) |
+| `lifetime_value_actual` | `revenue_by_customer` | Equals per-customer `total_revenue` from qualifying orders (GD-11) |
+| `segment_type` | `customer_segmentation` | Behavioral classification (finalized): |
+| | | **Inactive** — `total_orders = 0` |
+| | | **One-Time** — `total_orders = 1` |
+| | | **Repeat** — `total_orders >= 2` AND `total_revenue < P75` |
+| | | **High-Value** — `total_orders >= 2` AND `total_revenue >= P75` |
+| `customer_count` | `customer_segmentation` | `COUNT(customer_id)` per `segment_type`; empty buckets omitted (GD-03) |
 | `avg_revenue` | `customer_segmentation` | `AVG(total_revenue)` per `segment_type` |
-| `period_type`, `period_start`, `order_date` | `daily_weekly_trends` | Date truncation / week grouping on `order_date` |
-| `country` in `revenue_by_customer` | `revenue_by_customer` | Copied from `silver.customers` for dashboard filtering *(not a new business attribute)* |
+| `period_type`, `period_start`, `order_date` | `daily_weekly_trends` | Single table; `DAILY`/`WEEKLY`; weekly `order_date` NULL (GD-04, GD-14) |
 
 ### 11.4 Fields that are NOT derived (passed through)
 
@@ -626,11 +634,11 @@ For test and validation reference. See `data-quality-strategy.md` for check mapp
 | ID | Assumption | Impact on model |
 |----|------------|-----------------|
 | DA-07 | Gold uses `Completed` orders only | Revenue metrics exclude Pending/Cancelled |
-| DA-08 | `lifetime_value_actual` = sum of completed valid order amounts | Gold field definition |
-| DA-09 | Behavioral segmentation rules | `segment_type` values and logic |
-| DA-10 | High-Value threshold = P75 of customer revenue | `High-Value` vs `Repeat` boundary |
-| DA-12 | `country` denormalized into `gold.revenue_by_customer` | Extra Gold column for dashboard |
+| DA-08 | `lifetime_value_actual` = per-customer `total_revenue` from qualifying orders | Gold field definition (GD-11) |
+| DA-09 | Behavioral segmentation rules | `segment_type` values and logic (§11.3) |
+| DA-10 | High-Value threshold = P75 of customer revenue among `total_orders >= 1` | `High-Value` vs `Repeat` boundary (GD-09) |
+| GD-01–GD-14 | Finalized Gold engineering decisions | See `design-notes.md` §5.5 |
 
 ---
 
-*Document version: 1.0 — aligned with design-notes.md v1.0; not yet validated against implemented tables.*
+*Document version: 1.1 — Gold schemas finalized (GD-01–GD-14); aligned with design-notes.md §5.*

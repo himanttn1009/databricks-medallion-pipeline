@@ -12,6 +12,7 @@ Additional documentation supporting the assessment submission.
 | Data model | `data-model.md` |
 | Data quality strategy | `data-quality-strategy.md` |
 | Silver layer (module) | `src/silver/README.md` |
+| Gold layer (module) | `src/gold/README.md` |
 | AI workflow | `tool-workflow.md` |
 | Cursor workflow | `tool-specific/cursor-workflow/` |
 

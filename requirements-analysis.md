@@ -690,23 +690,25 @@ The following items are **explicitly unresolved**. They must be decided and docu
 
 ### 17.2 Gold aggregations — count
 
-| What assignment says | Conflict |
-|---------------------|----------|
-| Three named aggregation tables (core acceptance criteria) | Common technical requirements say **four aggregations** |
-| Repo includes `03_daily_weekly_trends.sql` | Not described in Gold spec narrative |
+| What assignment says | Resolution |
+|---------------------|------------|
+| Three named aggregation tables (core acceptance criteria) | **Required:** `sales_by_product`, `revenue_by_customer`, `customer_segmentation` |
+| Common technical requirements say **four aggregations** | **Required fourth:** `gold.daily_weekly_trends` (GD-06) |
 
-**Open question:** Is `daily_weekly_trends` required or optional?
+**Resolved:** Implement all four Gold tables per `design-notes.md` §5.2.
 
 ### 17.3 Customer segmentation logic
 
 - Gold `segment_type`: `High-Value` / `Repeat` / `One-Time` / `Inactive`
 - Source `customer_segment`: `Premium` / `Standard` / `Basic`
-- **No mapping rules, thresholds, or time windows defined.**
+
+**Resolved:** Behavioral rules and P75 threshold finalized in `design-notes.md` §5.6 and `data-model.md` §11.3. Segmentation uses complete valid-customer population (LEFT JOIN qualifying orders).
 
 ### 17.4 `lifetime_value_actual` calculation
 
 - Present in Gold table B alongside source `lifetime_value`
-- **No definition** of how it is computed or how it relates to source field
+
+**Resolved:** `lifetime_value_actual = total_revenue` = `SUM(total_amount)` of qualifying orders per customer; 0.00 when no orders (GD-11, DA-08). Source `lifetime_value` remains in Silver only.
 
 ### 17.5 Silver "clean" vs flag-only
 

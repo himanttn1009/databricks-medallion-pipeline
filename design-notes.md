@@ -1,8 +1,8 @@
 # Design Notes
 
-> **Status:** Architecture design complete. Bronze layer implemented and runtime-validated. **Silver layer design finalized**; Silver implementation not started; Silver runtime validation not performed.  
+> **Status:** Bronze and Silver implemented and runtime-validated. **Gold layer design finalized** (§5); Gold implementation not started; Gold runtime validation not performed.  
 > **Inputs:** `assignment/assignment-requirements.md`, `requirements-analysis.md`, `.cursor/rules/project-engineering.mdc`  
-> **Companion docs:** `data-model.md`, `data-quality-strategy.md`, `database/schema.sql`, `src/silver/README.md`
+> **Companion docs:** `data-model.md`, `data-quality-strategy.md`, `database/schema.sql`, `src/silver/README.md`, `src/gold/README.md`
 
 ---
 
@@ -744,99 +744,247 @@ Silver implementation is complete when:
 
 ## 5. Gold Layer
 
-### 5.1 Responsibilities
+> **Status:** Design **finalized** (GD-01–GD-14).  
+> **Implementation:** Not started.  
+> **Runtime validation:** Not performed.  
+> **Inputs:** Assignment §8, validated Silver tables (`silver.customers` 10,000 / `silver.products` 500 / `silver.orders` 100,000), `data-model.md` §10.
 
-1. Read **valid Silver rows only** (`is_valid = true`).
-2. Build business aggregations per assignment spec.
-3. Apply business semantics (order status filter, segmentation rules).
-4. Write Gold Delta tables.
+### 5.1 Architecture and layer boundaries
 
-### 5.2 Gold tables
+Gold is the **business analytics** layer. It reads **only** from Silver entity tables, applies explicit business filters, computes assignment-defined aggregations, and writes curated Delta tables in schema `gold` for the Dashboard.
 
-| Table | Script | Required by |
-|-------|--------|-------------|
-| `gold.sales_by_product` | `01_sales_by_product.sql` | Core acceptance criteria |
-| `gold.revenue_by_customer` | `02_revenue_by_customer.sql` | Core acceptance criteria |
-| `gold.daily_weekly_trends` | `03_daily_weekly_trends.sql` | Repo structure + common technical requirements (4 aggregations) |
-| `gold.customer_segmentation` | `04_customer_segmentation.sql` | Core acceptance criteria |
+```
+silver.customers  ──┐
+silver.products   ──┼──► Gold aggregations (PySpark + Delta)
+silver.orders     ──┘         │
+                              ├── gold.sales_by_product
+                              ├── gold.revenue_by_customer
+                              ├── gold.customer_segmentation
+                              └── gold.daily_weekly_trends
+                                        │
+                                        ▼
+                              Databricks SQL Dashboard
+```
+
+| Responsibility | Gold | Not Gold |
+|----------------|------|----------|
+| Read Silver (`is_valid = true`) | ✓ | |
+| Business aggregations | ✓ | |
+| Re-implement Silver DQ | | ✓ |
+| Modify or repair Silver data | | ✓ |
+| Read Bronze | | ✓ |
+| Row-level DQ flags / `silver.dq_metrics` | | Silver |
 
 | | |
 |---|---|
-| **Decision** | Implement **four** Gold tables including `daily_weekly_trends` |
-| **Reason** | Resolves three-vs-four aggregation ambiguity; matches repository structure |
-| **Alternative considered** | Only three tables from core acceptance criteria |
-| **Why chosen** | Common technical requirements and repo explicitly include fourth SQL file; trends support dashboard date filters |
+| **Decision** | Gold consumes `silver.*` with `is_valid = true`; never reads Bronze |
+| **Reason** | Silver is DQ system of record; Gold is trusted analytics surface |
+| **Alternative considered** | Gold reads Bronze with inline DQ |
+| **Why chosen** | Preserves medallion boundaries; avoids duplicating Silver logic |
 
-### 5.3 `daily_weekly_trends` definition
+### 5.2 Gold table names
 
-| Column | Description |
+| Table | Assignment | Purpose |
+|-------|------------|---------|
+| `gold.sales_by_product` | **Required** (§8.A) | Product performance |
+| `gold.revenue_by_customer` | **Required** (§8.B) | Customer value / LTV |
+| `gold.customer_segmentation` | **Required** (§8.C) | Behavioral segments for dashboard pie chart |
+| `gold.daily_weekly_trends` | **Repo / technical requirements** (GD-06) | Daily and weekly revenue trends |
+
+Format: **Delta Lake**, schema `gold`, no partitioning. Write mode: **overwrite** per run (deterministic rebuild).
+
+### 5.3 Valid-row filtering and qualifying orders
+
+**Silver dimension filter:** `is_valid = true` on all Silver inputs used.
+
+**Qualifying order (revenue contract):**
+
+```
+silver.orders.is_valid = true
+AND order_status = 'Completed'
+```
+
+| Metric | Calculation |
 |--------|-------------|
-| `order_date` | Date grain |
-| `period_type` | `DAILY` or `WEEKLY` |
-| `period_start` | Start of week for weekly rows |
-| `total_orders` | Count of completed orders |
-| `total_revenue` | Sum of `total_amount` |
+| `total_revenue` | `SUM(total_amount)` |
+| `total_orders` | `COUNT(DISTINCT order_id)` |
+| `avg_order_value` | `total_revenue / total_orders` (rounded `DECIMAL(18,2)`; null when `total_orders = 0`) |
+| `lifetime_value_actual` | `total_revenue` per customer |
 
-> **Assumption:** Weekly aggregation uses ISO week or calendar week starting Monday — to be stated in `data-model.md`.
+Invalid Silver rows remain in Silver for audit; Gold excludes them via `is_valid = true`. This is explicit analytics filtering, not silent deletion.
 
-### 5.4 Order status filter for Gold
+### 5.4 Join strategy for order-backed aggregates (GD-02, GD-13)
+
+Order-backed product and customer aggregations require:
+
+- Qualifying order (above)
+- **Inner join** to valid Silver dimension (`silver.products.is_valid = true` and/or `silver.customers.is_valid = true`)
+
+Orders are **excluded** from order-backed Gold aggregates when the required Silver customer or product dimension is invalid or unavailable.
+
+**Customer revenue base (GD — segmentation prerequisite):**
+
+```
+valid Silver customers
+LEFT JOIN
+valid completed Silver orders (with valid product when attributing order revenue)
+```
+
+This retains customers with zero qualifying orders (needed for **Inactive** segmentation).
+
+### 5.5 Engineering decisions GD-01–GD-14
+
+| ID | Decision |
+|----|----------|
+| **GD-01** | Products with zero qualifying completed-valid orders are **omitted** from `gold.sales_by_product` |
+| **GD-02** | Order-backed aggregates use qualifying orders + inner joins to valid Silver dimensions |
+| **GD-03** | Empty customer segmentation buckets are **omitted** |
+| **GD-04** | Weekly `daily_weekly_trends` rows: `order_date = NULL`; `period_start` = Monday week anchor |
+| **GD-05** | Weeks start Monday using Spark calendar-week semantics |
+| **GD-06** | Implement all **four** Gold tables (three assignment-required + `daily_weekly_trends`) |
+| **GD-07** | **Do not** add `country` to `gold.revenue_by_customer` — assignment-aligned schema only |
+| **GD-08** | `avg_order_value` is `DECIMAL(18,2)`, rounded to two decimal places |
+| **GD-09** | `total_revenue >= P75` → High-Value; `total_revenue < P75` → Repeat (among customers with ≥2 orders) |
+| **GD-10** | Gold implementation uses **PySpark/DataFrame APIs** (Spark Connect compatible), not separate SQL files |
+| **GD-11** | Zero-order customers: `total_orders=0`, `total_revenue=0.00`, `avg_order_value=NULL`, `lifetime_value_actual=0.00` |
+| **GD-12** | No Gold metadata columns unless assignment/data-model explicitly requires them |
+| **GD-13** | Orders excluded when required valid customer or product dimension unavailable |
+| **GD-14** | Daily and weekly trends in **one** table via `period_type` (`DAILY` / `WEEKLY`) |
+
+### 5.6 Schemas (assignment-aligned)
+
+#### `gold.sales_by_product`
+
+**Grain:** One row per `product_id` with ≥1 qualifying order (GD-01).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `product_id` | INT | From valid `silver.products` |
+| `product_name` | STRING | |
+| `category` | STRING | |
+| `total_orders` | BIGINT | `COUNT(DISTINCT order_id)` |
+| `total_revenue` | DECIMAL(18,2) | `SUM(total_amount)` |
+| `avg_order_value` | DECIMAL(18,2) | `total_revenue / total_orders` |
+
+#### `gold.revenue_by_customer`
+
+**Grain:** One row per valid `customer_id` in `silver.customers` (includes zero-order customers).
+
+| Column | Type | Nullable | Notes |
+|--------|------|----------|-------|
+| `customer_id` | INT | No | |
+| `customer_name` | STRING | No | |
+| `customer_segment` | STRING | No | Marketing tier: `Premium` / `Standard` / `Basic` |
+| `total_orders` | BIGINT | No | 0 when no qualifying orders |
+| `total_revenue` | DECIMAL(18,2) | No | 0.00 when no qualifying orders |
+| `avg_order_value` | DECIMAL(18,2) | Yes | NULL when `total_orders = 0` |
+| `lifetime_value_actual` | DECIMAL(18,2) | No | Equals `total_revenue`; 0.00 when no orders |
+
+#### `gold.customer_segmentation`
+
+**Grain:** One row per non-empty behavioral `segment_type` (GD-03).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `segment_type` | STRING | `High-Value`, `Repeat`, `One-Time`, `Inactive` |
+| `customer_count` | BIGINT | |
+| `avg_revenue` | DECIMAL(18,2) | `AVG(customer total_revenue)` in segment |
+| `total_revenue` | DECIMAL(18,2) | `SUM(customer total_revenue)` in segment |
+
+**Behavioral rules** (derived from complete valid-customer population):
+
+| `segment_type` | Rule |
+|----------------|------|
+| **Inactive** | `total_orders = 0` |
+| **One-Time** | `total_orders = 1` |
+| **Repeat** | `total_orders >= 2` AND `total_revenue < P75` |
+| **High-Value** | `total_orders >= 2` AND `total_revenue >= P75` |
+
+`P75` = 75th percentile of `total_revenue` among customers with `total_orders >= 1`.
+
+> Distinct from source `customer_segment` (marketing classification).
+
+#### `gold.daily_weekly_trends`
+
+**Grain:** One row per `(period_type, period_start)` (GD-14).
+
+| Column | Type | Nullable | Notes |
+|--------|------|----------|-------|
+| `order_date` | DATE | Yes | Populated for `DAILY`; **NULL** for `WEEKLY` (GD-04) |
+| `period_type` | STRING | No | `DAILY` or `WEEKLY` |
+| `period_start` | DATE | No | Date anchor; Monday for weekly rows (GD-05) |
+| `total_orders` | BIGINT | No | |
+| `total_revenue` | DECIMAL(18,2) | No | |
+
+### 5.7 Order status filter
 
 | | |
 |---|---|
-| **Decision** | Gold revenue and order counts include **`order_status = 'Completed'`** orders only |
-| **Reason** | Pending/Cancelled orders should not inflate revenue metrics; standard e-commerce practice |
-| **Alternative considered** | Include all order statuses |
-| **Why chosen** | Produces meaningful business metrics; assignment does not specify but implied by revenue analytics context |
+| **Decision** | Gold revenue and order counts include **`order_status = 'Completed'`** only (DA-07) |
+| **Reason** | Pending/Cancelled orders must not inflate revenue |
+| **Alternative considered** | All order statuses |
+| **Why chosen** | Standard e-commerce analytics; aligns with generated data (~70% Completed) |
 
-> **Assumption:** Not explicitly stated in assignment — documented here for testability.
-
-### 5.5 `lifetime_value_actual`
+### 5.8 `lifetime_value_actual`
 
 | | |
 |---|---|
-| **Decision** | `lifetime_value_actual = SUM(total_amount)` of **completed, valid** orders per customer |
-| **Reason** | Computed from trusted Silver order data; comparable to source `lifetime_value` for analysis |
-| **Alternative considered** | Copy source `lifetime_value` from customers table |
-| **Why chosen** | Demonstrates derived metric from pipeline; divergence from source field is expected and documentable |
+| **Decision** | `lifetime_value_actual = total_revenue` = `SUM(total_amount)` of qualifying orders per customer (DA-08, GD-11) |
+| **Reason** | Pipeline-computed LTV from trusted order facts |
+| **Alternative considered** | Copy source `customers.lifetime_value` |
+| **Why chosen** | Demonstrates derived metric; source field remains in Silver for comparison |
 
-### 5.6 Customer segmentation rules
+### 5.9 Recommended `src/gold/` structure
 
-Behavioral segments (distinct from source `customer_segment` Premium/Standard/Basic):
+| File | Purpose |
+|------|---------|
+| `config.py` | `GOLD_SCHEMA`, table names, `COMPLETED_STATUS`, segment labels |
+| `gold_utils.py` | Silver prerequisite validation, shared filters, Delta write helpers |
+| `aggregations.py` | PySpark aggregation functions (or split per table) |
+| `create_gold_tables.py` | Orchestrator |
 
-| `segment_type` | Rule *(assumption)* |
-|----------------|---------------------|
-| **Inactive** | Zero completed valid orders |
-| **One-Time** | Exactly one completed valid order |
-| **Repeat** | Two or more completed valid orders, and `total_revenue < high_value_threshold` |
-| **High-Value** | Two or more completed valid orders, and `total_revenue >= high_value_threshold` |
+> **GD-10:** PySpark/DataFrame implementation — not separate `.sql` files. Repository may retain legacy `.sql` placeholders until implementation replaces them.
 
-| | |
-|---|---|
-| **Decision** | High-value threshold = **75th percentile** of customer `total_revenue` among customers with ≥1 completed order |
-| **Reason** | Data-driven threshold adapts to generated data; no magic dollar amount |
-| **Alternative considered** | Fixed dollar cutoff (e.g., $1,000) |
-| **Why chosen** | Works with synthetic data of unknown scale; simple to implement and test |
+### 5.10 Orchestration
 
-> **Assumption:** Segmentation rules are not defined in the assignment. These rules will be codified in `data-model.md` and validated with unit tests.
+`create_gold_tables.py`:
 
-### 5.7 Aggregation definitions
+1. `ensure_gold_schema_exists()`
+2. `validate_silver_prerequisites()` — tables exist; row counts 10,000 / 500 / 100,000
+3. Build shared views/DataFrames for qualifying orders and valid dimensions
+4. Build customer revenue base (valid customers LEFT JOIN qualifying orders)
+5. Write `gold.sales_by_product`, `gold.revenue_by_customer`, `gold.daily_weekly_trends`, `gold.customer_segmentation` (segmentation from customer revenue base)
+6. Print summary; return non-zero on fatal failure
 
-**Sales by Product** (from valid completed orders joined to valid products):
+### 5.11 Error handling
 
-- `total_orders` = `COUNT(DISTINCT order_id)`
-- `total_revenue` = `SUM(total_amount)`
-- `avg_order_value` = `total_revenue / total_orders`
+**Fatal:** missing/unreadable Silver tables, unexpected Silver row counts, Delta write failure, structural failure.
 
-**Revenue by Customer** (from valid completed orders joined to valid customers):
+**Non-fatal:** empty segment buckets (omitted per GD-03); zero qualifying orders (empty or zero-filled aggregates as designed).
 
-- Same metrics plus `lifetime_value_actual` as defined above
-- `customer_segment` = source marketing segment from customers table
+### 5.12 Spark Connect compatibility
 
-**Customer Segmentation** — aggregated from per-customer revenue totals using rules above.
+DataFrame API, Spark SQL (`CREATE SCHEMA`), Delta `saveAsTable` only. **No** `spark._jvm`, `spark._jsc`, or Hadoop FileSystem APIs.
 
-### 5.8 Gold orchestration
+### 5.13 Validation strategy
 
-`create_gold_tables.py` runs SQL scripts in order, reading from `silver.*` and writing to `gold.*` using Spark SQL.
+| Tier | Checks |
+|------|--------|
+| Static | `ast.parse`, forbidden API grep, schema column match |
+| Runtime | Gold tables exist; grains unique; segmentation rules; revenue reconciliation between product and customer totals (same join rules) |
+| Tests | `tests/test_gold_logic.py` for segmentation; integration in `tests/test_pipeline_integration.py` |
+
+### 5.14 Gold acceptance criteria
+
+- [ ] Reads only from `silver.customers`, `silver.products`, `silver.orders`
+- [ ] Uses `is_valid = true` on Silver inputs
+- [ ] Revenue metrics use `order_status = 'Completed'` only
+- [ ] Three assignment tables match §8 columns and calculations
+- [ ] Fourth table `daily_weekly_trends` implemented (GD-06)
+- [ ] No Silver DQ logic duplicated; no Silver mutation
+- [ ] Delta overwrite; Spark Connect compatible
+- [ ] `create_gold_tables.py` orchestrates all four tables
+- [ ] Dashboard can query Gold without reading Silver
 
 ---
 
@@ -872,14 +1020,14 @@ Behavioral segments (distinct from source `customer_segment` Premium/Standard/Ba
 | **Order date range** | Trends tile (and orders-backed logic if parameterized) | `gold.daily_weekly_trends` |
 | **Product category** | Top products tile | `gold.sales_by_product.category` |
 | **Customer segment** (Premium/Standard/Basic) | Revenue histogram | `gold.revenue_by_customer.customer_segment` |
-| **Country** | Revenue histogram | Requires join or pre-compute — see below |
+| **Country** | Revenue histogram | Join `silver.customers` at query time *(GD-07 — not denormalized into Gold)* |
 
 | | |
 |---|---|
-| **Decision** | Add `country` to `gold.revenue_by_customer` during Gold build |
-| **Reason** | Assignment requires filters but not which dimensions; country filter is useful and available in source |
-| **Alternative considered** | Parameterized join to Silver customers at query time |
-| **Why chosen** | Denormalizing one dimension into Gold simplifies dashboard SQL for assessment scope |
+| **Decision** | **Do not** add `country` to `gold.revenue_by_customer` (GD-07) |
+| **Reason** | Keep Gold schema assignment-aligned; `country` is not in assignment §8.B |
+| **Alternative considered** | Denormalize `country` into Gold during build (prior DA-12) |
+| **Why chosen** | Authoritative assignment schema takes precedence; dashboard can join Silver for country filter if needed |
 
 > **Assumption:** Filter dimensions are not specified in assignment; above choices are design assumptions.
 
@@ -1376,8 +1524,8 @@ Deferring these aligns with assignment guidance: **do not expand pipeline comple
 | DA-08 | `lifetime_value_actual` = sum of completed valid order amounts |
 | DA-09 | Segmentation rules per Section 5.6 (not assignment-defined) |
 | DA-10 | High-value threshold = P75 of customer revenue |
-| DA-11 | Dashboard filters: date range, category, customer segment, country |
-| DA-12 | `country` denormalized into `gold.revenue_by_customer` |
+| DA-11 | Dashboard filters: date range, category, customer segment; country via Silver join if needed |
+| DA-12 | ~~`country` denormalized into `gold.revenue_by_customer`~~ **Superseded by GD-07** — not included in Gold schema |
 | DA-13 | Defect overlap allowed on FK-related rows to approach ~700 total |
 | DA-14 | `pytest` for test execution |
 | DA-15 | Code review notes live in `debugging-notes.md` |
@@ -1396,4 +1544,4 @@ Deferring these aligns with assignment guidance: **do not expand pipeline comple
 
 ---
 
-*Document version: 1.0 — architecture design; implementation and testing not started.*
+*Document version: 1.1 — Gold layer design finalized (GD-01–GD-14); Gold implementation and runtime validation not started.*
