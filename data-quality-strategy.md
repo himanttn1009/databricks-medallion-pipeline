@@ -1,6 +1,6 @@
 # Data Quality Strategy
 
-> **Status:** Strategy defined; checks not yet implemented or executed.  
+> **Status:** Silver design **finalized** (see `design-notes.md` §4). Silver DQ checks **not yet implemented or executed**. Silver runtime validation **not performed**.  
 > **Inputs:** `assignment/assignment-requirements.md`, `requirements-analysis.md`, `design-notes.md`, `data-model.md`  
 > **Implementation owner:** `src/silver/` (scripts `01`–`05`, `create_silver_tables.py`)
 
@@ -44,7 +44,7 @@ Failure codes **accumulate** per row. `is_valid = true` only when `quality_check
 | `REFERENTIAL_INTEGRITY` | Section 5 |
 | `BUSINESS_LOGIC` | Section 6 |
 
-Multiple failures are stored as comma-separated codes, e.g. `COMPLETENESS,UNIQUENESS`.
+Multiple failures are stored as comma-separated codes in **canonical order**: `COMPLETENESS`, `UNIQUENESS`, `TYPE_VALIDATION`, `REFERENTIAL_INTEGRITY`, `BUSINESS_LOGIC` (SD-09). Example: `COMPLETENESS,UNIQUENESS`.
 
 ---
 
@@ -265,11 +265,11 @@ Append `UNIQUENESS` to `quality_check_result` for every row in a duplicate key g
 | Table | Column | Validation rule | FAIL when |
 |-------|--------|-----------------|-----------|
 | `customers` | `customer_segment` | Enum | Not in (`Premium`, `Standard`, `Basic`) |
-| `customers` | `signup_date` | Date range | `signup_date > current_date()` *(assumption)* |
+| `customers` | `signup_date` | Date range | `signup_date > REFERENCE_DATE` where **`REFERENCE_DATE = 2026-08-15`** (fixed; SD-06 — do not use `current_date()`) |
 | `customers` | `lifetime_value` | Non-negative | `< 0` |
 | `orders` | `order_status` | Enum | Not in (`Pending`, `Completed`, `Cancelled`) |
-| `orders` | `order_date` | Date range | `order_date > current_date()` *(assumption)* |
-| `orders` | `payment_date` | Date range | `payment_date > current_date()` when not null *(assumption)* |
+| `orders` | `order_date` | Date range | `order_date > REFERENCE_DATE` |
+| `orders` | `payment_date` | Date range | `payment_date > REFERENCE_DATE` when not null |
 | `orders` | `quantity` | Non-negative integer | `< 0` |
 | `orders` | `unit_price`, `total_amount` | Non-negative | `< 0` |
 | `products` | `price`, `cost` | Non-negative | `< 0` |
@@ -277,7 +277,7 @@ Append `UNIQUENESS` to `quality_check_result` for every row in a duplicate key g
 
 A row fails if **any** type rule on that row fails. One `TYPE_VALIDATION` code per row regardless of how many columns fail.
 
-> **Assumption:** Future-date checks are not assignment-specified; included as reasonable type validation. Generator should produce valid dates for most rows so this check primarily guards against generation bugs.
+> **Design decision (SD-06):** Future-date checks use fixed **`REFERENCE_DATE = 2026-08-15`**, matching `DATA_GENERATION_NOTES.md`. This supersedes any prior use of `current_date()` for Silver type validation.
 
 ### 4.3 Expected failure cases
 
@@ -344,7 +344,7 @@ Append `TYPE_VALIDATION` to `quality_check_result` when any type rule fails on t
 |-----------|-------|
 | **Rule** | Foreign key values in orders must exist in the corresponding parent table |
 | **Applicable table** | `silver.orders` |
-| **Applicable columns** | `customer_id` → `silver.customers.customer_id`; `product_id` → `silver.products.product_id` |
+| **Applicable columns** | `customer_id` → `bronze.customers.customer_id`; `product_id` → `bronze.products.product_id` |
 | **Script** | `04_quality_referential_integrity.py` |
 | **Report name** | `REFERENTIAL_INTEGRITY_ORDERS` |
 
@@ -359,7 +359,7 @@ For each row in `silver.orders`:
 | `product_id IS NULL` | Skip product FK check |
 | `product_id IS NOT NULL` AND not in parent `product_id` set | FAIL → `REFERENTIAL_INTEGRITY` |
 
-**Parent key set:** Distinct `customer_id` / `product_id` values from `silver.customers` and `silver.products` respectively, after parent-table checks have been applied in the same pipeline run.
+**Parent key set (SD-04):** Distinct `customer_id` / `product_id` values from **`bronze.customers`** and **`bronze.products`** respectively (existence-based; not filtered by parent `is_valid`).
 
 A row fails if **either** FK is orphan when non-null. One `REFERENTIAL_INTEGRITY` code per row.
 
@@ -430,24 +430,26 @@ Append `REFERENTIAL_INTEGRITY` to `quality_check_result` when a non-null FK does
 
 | Attribute | Value |
 |-----------|-------|
-| **Rule** | Order records must satisfy domain business rules beyond type and referential constraints |
-| **Applicable table** | `silver.orders` |
-| **Applicable columns** | `quantity`, `unit_price`, `total_amount`, `order_status`, `payment_date` |
+| **Rule** | Entity records must satisfy domain business rules beyond type and referential constraints |
+| **Applicable table** | `silver.products`, `silver.orders` |
 | **Script** | `05_quality_business_logic.py` |
-| **Report name** | `BUSINESS_LOGIC_ORDERS` |
+| **Report name** | `BUSINESS_LOGIC_PRODUCTS`, `BUSINESS_LOGIC_ORDERS` |
 
-> Implemented per repository structure. Supports DQ depth beyond the four mandatory assignment narrative checks. Reported separately in `silver.dq_metrics`.
+> Implemented per repository structure. Reported separately in `silver.dq_metrics`.
 
 ### 6.2 Detection logic
 
-| Rule ID | Business rule | FAIL when |
-|---------|---------------|-----------|
-| BR-01 | Order total consistency | `ABS(total_amount - (quantity * unit_price)) > 0.01` |
-| BR-02 | Completed orders require payment date | `order_status = 'Completed' AND payment_date IS NULL` |
+| Rule ID | Entity | Business rule | FAIL when |
+|---------|--------|---------------|-----------|
+| BR-01 | products | Margin | `price <= cost` |
+| BR-02 | orders | Order total consistency | `ABS(total_amount - (quantity * unit_price)) > 0.01` |
+| BR-03 | orders | Completed orders require payment date | `order_status = 'Completed' AND payment_date IS NULL` |
+| BR-04 | orders | Pending/Cancelled payment | `order_status IN ('Pending','Cancelled') AND payment_date IS NOT NULL` |
+| BR-05 | orders | Order after signup | Resolvable customer AND `order_date < customer_signup_date` *(lookup: `MIN(signup_date)` per `customer_id` from Bronze; SD-01)* |
 
-A row fails if **any** business rule fails. One `BUSINESS_LOGIC` code per row.
+BR-05 uses an internal validation lookup only; Silver entity tables are not deduplicated. Skipped when `customer_id` IS NULL or orphan.
 
-> **Assumption:** BR-02 is not assignment-specified; it is a reasonable e-commerce rule documented in `design-notes.md`.
+A row fails if **any** business rule on that entity fails. One `BUSINESS_LOGIC` code per row.
 
 ### 6.3 Expected failure cases
 
@@ -497,7 +499,8 @@ Append `BUSINESS_LOGIC` to `quality_check_result` when any business rule fails.
 
 | `check_name` | `entity` | `threshold_pct` |
 |--------------|----------|-----------------|
-| `BUSINESS_LOGIC_ORDERS` | `orders` | 99.00 |
+| `BUSINESS_LOGIC_PRODUCTS` | products | 99.00 |
+| `BUSINESS_LOGIC_ORDERS` | orders | 99.00 |
 
 ---
 
@@ -562,7 +565,7 @@ orders.order_id duplicate (20)      → UNIQUENESS
 
 | Rule | Detail |
 |------|--------|
-| Accumulation | Each failed check appends its code; order in string matches check execution order |
+| Accumulation | Each failed check appends its code in canonical order: `COMPLETENESS`, `UNIQUENESS`, `TYPE_VALIDATION`, `REFERENTIAL_INTEGRITY`, `BUSINESS_LOGIC` (SD-09) |
 | Initial value | Before checks: treat as empty; after all pass: `PASS` |
 | Multiple failures | e.g. duplicate `customer_id` with NULL `email` → `COMPLETENESS,UNIQUENESS` |
 | No silent drop | Row count in Silver entity tables = row count in Bronze entity tables |
@@ -590,7 +593,9 @@ Invalid row (is_valid = false)
 
 ### 9.1 Output table: `silver.dq_metrics`
 
-Persisted Delta table written at the end of `create_silver_tables.py`.
+Persisted Delta table; **append** mode per `run_id` (SD-03). Entity tables use **overwrite** per run.
+
+**Grain:** one metric row per **`(run_id, entity, check_name)`** for checks configured on that entity.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -605,21 +610,22 @@ Persisted Delta table written at the end of `create_silver_tables.py`.
 | `threshold_met` | BOOLEAN | `pass_pct` meets threshold *(per check comparison rules below)* |
 | `run_timestamp` | TIMESTAMP | UTC timestamp when metrics computed |
 
-### 9.2 Report rows (one per check per run)
+### 9.2 Report rows (one per `(run_id, entity, check_name)` per run)
 
 | `check_name` | `entity` | `threshold_pct` | `threshold_met` comparison |
 |--------------|----------|-----------------|---------------------------|
 | `COMPLETENESS_CUSTOMERS` | customers | 99.00 | `pass_pct > 99` |
-| `COMPLETENESS_ORDERS` | orders | 99.00 | `pass_pct > 99` |
 | `UNIQUENESS_CUSTOMERS` | customers | 100.00 | `pass_pct = 100` |
-| `UNIQUENESS_ORDERS` | orders | 100.00 | `pass_pct = 100` |
 | `TYPE_VALIDATION_CUSTOMERS` | customers | 99.00 | `pass_pct > 99` |
-| `TYPE_VALIDATION_ORDERS` | orders | 99.00 | `pass_pct > 99` |
 | `TYPE_VALIDATION_PRODUCTS` | products | 99.00 | `pass_pct > 99` |
+| `BUSINESS_LOGIC_PRODUCTS` | products | 99.00 | `pass_pct > 99` |
+| `COMPLETENESS_ORDERS` | orders | 99.00 | `pass_pct > 99` |
+| `UNIQUENESS_ORDERS` | orders | 100.00 | `pass_pct = 100` |
+| `TYPE_VALIDATION_ORDERS` | orders | 99.00 | `pass_pct > 99` |
 | `REFERENTIAL_INTEGRITY_ORDERS` | orders | 99.90 | `pass_pct > 99.9` |
 | `BUSINESS_LOGIC_ORDERS` | orders | 99.00 | `pass_pct > 99` |
 
-**Total: 9 metric rows per pipeline run.**
+**Total: 10 metric rows per complete Silver run** (customers = 3, products = 2, orders = 5).
 
 ### 9.3 How each check contributes
 
@@ -629,7 +635,7 @@ Persisted Delta table written at the end of `create_silver_tables.py`.
 | Uniqueness | All rows in entity table | Rows participating in duplicate key groups |
 | Type validation | All rows in entity table | Rows failing any type rule |
 | Referential integrity | All rows in `orders` | Rows with non-null orphan FK |
-| Business logic | All rows in `orders` | Rows failing any business rule |
+| Business logic | All rows in `products` or `orders` | Rows failing any business rule on that entity |
 
 ### 9.4 Presentation
 
@@ -647,6 +653,7 @@ Persisted Delta table written at the end of `create_silver_tables.py`.
 | `UNIQUENESS_*` | **false** — intentional duplicates prevent 100% |
 | `TYPE_VALIDATION_*` | **true** — no intentional type defects |
 | `REFERENTIAL_INTEGRITY_ORDERS` | **true** — 80 orphans / 100K below 0.1% failure |
+| `BUSINESS_LOGIC_PRODUCTS` | **true** — no intentional business-rule defects on products |
 | `BUSINESS_LOGIC_ORDERS` | **true** — no intentional business-rule defects |
 
 > A report showing `UNIQUENESS threshold_met = false` **proves the framework is working**, not that the pipeline is broken.
@@ -666,7 +673,7 @@ Persisted Delta table written at the end of `create_silver_tables.py`.
 | **Defect detection tests** | Verify each intentional defect type is flagged with correct code and minimum count |
 | **Negative tests** | Verify valid rows are not falsely flagged for that check |
 | **Scope tests** | Verify `customer_id` uniqueness not applied to orders |
-| **Metrics tests** | Verify `silver.dq_metrics` has 9 rows per run with correct columns |
+| **Metrics tests** | Verify `silver.dq_metrics` has **10** rows per `run_id` with correct columns |
 | **Fixture tests** | Type and business-rule checks proven with small synthetic inputs |
 
 ### 10.3 Success criteria for DQ tests
@@ -675,18 +682,25 @@ Persisted Delta table written at the end of `create_silver_tables.py`.
 |-----------|--------|
 | Detection | Each assignment intentional defect type detected ≥ expected count |
 | No false scope | Orders not flagged for `customer_id` uniqueness |
-| Report populated | `silver.dq_metrics` contains all 9 check rows |
+| Report populated | `silver.dq_metrics` contains all **10** check rows per `run_id` |
 | Pipeline continues | Silver completes even when thresholds not met |
 
 ### 10.4 Current status
 
 | Item | Status |
 |------|--------|
+| Silver design | **Finalized** (`design-notes.md` §4) |
 | Silver DQ scripts | Not implemented |
-| Sample data with defects | Not generated |
+| Sample data with defects | Generated and validated (`DATA_GENERATION_NOTES.md`) |
+| Bronze layer | Implemented and runtime-validated |
 | DQ tests | Not written |
-| Any check executed | **No** |
-| Any threshold verified | **No** |
+| Silver runtime validation | **Not performed** |
+| Any Silver check executed | **No** |
+| Any Silver threshold verified | **No** |
+
+### 10.5 Spark Connect compatibility (Databricks Serverless)
+
+Silver implementation must not use `spark._jvm`, `spark._jsc`, or Hadoop `FileSystem` APIs. Use DataFrame, SQL, and Delta APIs only (see `design-notes.md` §4.15).
 
 ---
 

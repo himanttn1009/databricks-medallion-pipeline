@@ -1,8 +1,8 @@
 # Data Model
 
-> **Status:** Model defined; not yet implemented or validated against live data.  
+> **Status:** Model defined. Bronze implemented and runtime-validated. **Silver design finalized**; Silver tables not yet implemented; Silver runtime validation not performed.  
 > **Inputs:** `assignment/assignment-requirements.md`, `requirements-analysis.md`, `design-notes.md`  
-> **Companion docs:** `data-quality-strategy.md`, `database/schema.sql`
+> **Companion docs:** `data-quality-strategy.md`, `database/schema.sql`, `src/silver/README.md`
 
 ---
 
@@ -322,7 +322,7 @@ Silver entity tables contain **all Bronze business columns + Bronze metadata + S
 
 | Column | Type | Origin | Nullable | Business meaning |
 |--------|------|--------|----------|------------------|
-| `quality_check_result` | STRING | *(Silver derived)* | No | `PASS` or comma-separated failure codes: `COMPLETENESS`, `UNIQUENESS`, `TYPE_VALIDATION`, `REFERENTIAL_INTEGRITY`, `BUSINESS_LOGIC` |
+| `quality_check_result` | STRING | *(Silver derived)* | No | `PASS` or comma-separated failure codes in canonical order: `COMPLETENESS`, `UNIQUENESS`, `TYPE_VALIDATION`, `REFERENTIAL_INTEGRITY`, `BUSINESS_LOGIC` |
 | `is_valid` | BOOLEAN | *(Silver derived)* | No | `true` when `quality_check_result = 'PASS'`; Gold reads only valid rows |
 | `_silver_processed_timestamp` | TIMESTAMP | *(Silver derived)* | No | When Silver processing completed for this row |
 
@@ -340,7 +340,7 @@ All columns from `bronze.orders` plus Silver columns in Section 9.1.
 
 ### 9.5 `silver.dq_metrics`
 
-Quality reporting table — one row per check per pipeline run.
+Quality reporting table — **one row per `(run_id, entity, check_name)`** per Silver run. A complete run produces **exactly 10 metric rows** (customers = 3, products = 2, orders = 5). Written in **append** mode per `run_id`; Silver entity tables use **overwrite** per run.
 
 | Column | Type | Origin | Nullable | Business meaning |
 |--------|------|--------|----------|------------------|
@@ -354,6 +354,16 @@ Quality reporting table — one row per check per pipeline run.
 | `threshold_pct` | DECIMAL(5,2) | *(Silver derived)* | No | Required threshold for the check |
 | `threshold_met` | BOOLEAN | *(Silver derived)* | No | Whether `pass_pct` meets threshold |
 | `run_timestamp` | TIMESTAMP | *(Silver derived)* | No | When metrics were computed |
+
+**Configured checks per entity (10 rows per run):**
+
+| Entity | `check_name` values |
+|--------|---------------------|
+| customers | `COMPLETENESS_CUSTOMERS`, `UNIQUENESS_CUSTOMERS`, `TYPE_VALIDATION_CUSTOMERS` |
+| products | `TYPE_VALIDATION_PRODUCTS`, `BUSINESS_LOGIC_PRODUCTS` |
+| orders | `COMPLETENESS_ORDERS`, `UNIQUENESS_ORDERS`, `TYPE_VALIDATION_ORDERS`, `REFERENTIAL_INTEGRITY_ORDERS`, `BUSINESS_LOGIC_ORDERS` |
+
+Type-validation future-date rules use fixed **`REFERENCE_DATE = 2026-08-15`** (not `current_date()`). See `design-notes.md` §4.6 and SD-06.
 
 ---
 

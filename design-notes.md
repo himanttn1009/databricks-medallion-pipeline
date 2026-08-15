@@ -1,8 +1,8 @@
 # Design Notes
 
-> **Status:** Architecture design complete; not yet implemented or tested.  
+> **Status:** Architecture design complete. Bronze layer implemented and runtime-validated. **Silver layer design finalized**; Silver implementation not started; Silver runtime validation not performed.  
 > **Inputs:** `assignment/assignment-requirements.md`, `requirements-analysis.md`, `.cursor/rules/project-engineering.mdc`  
-> **Companion docs:** `data-model.md`, `data-quality-strategy.md`, `database/schema.sql`
+> **Companion docs:** `data-model.md`, `data-quality-strategy.md`, `database/schema.sql`, `src/silver/README.md`
 
 ---
 
@@ -414,97 +414,331 @@ No implementation code in this document — structure only.
 
 ## 4. Silver Layer
 
-### 4.1 Responsibilities
+### 4.1 Architecture and layer boundaries
 
-1. Read Bronze tables.
-2. Apply four quality check dimensions (see Section 10).
-3. Populate `quality_check_result` per row.
-4. Derive `is_valid` boolean for downstream use.
-5. Write full Silver tables (all rows retained).
-6. Produce `silver.dq_metrics` quality report.
+Silver is the **validation and flagging** layer between Bronze raw landing and Gold analytics.
 
-### 4.2 Silver tables
+```
+bronze.customers ──┐
+bronze.products  ──┼──► Silver DQ pipeline (PySpark + Delta)
+bronze.orders    ──┘         │
+                             ├── Row-level flags on entity tables
+                             └── Aggregate metrics → silver.dq_metrics
+                                      │
+                                      ▼
+                             Gold reads silver.* WHERE is_valid = true
+```
 
-| Table | Source | Notes |
-|-------|--------|-------|
-| `silver.customers` | `bronze.customers` | All source columns + quality columns |
-| `silver.orders` | `bronze.orders` | All source columns + quality columns |
-| `silver.products` | `bronze.products` | All source columns + quality columns |
-| `silver.dq_metrics` | Derived | One row per check per pipeline run |
+| Responsibility | Silver | Not Silver |
+|----------------|--------|------------|
+| Read Bronze unchanged | ✓ | |
+| Detect and flag DQ issues | ✓ | |
+| Delete, deduplicate, or repair rows | | ✓ |
+| Aggregate analytics | | Gold |
+| Dashboard | | Dashboard |
 
-### 4.3 Silver quality columns
+| | |
+|---|---|
+| **Decision** | Silver flags in-place; Gold filters `is_valid = true` |
+| **Reason** | Assignment requires flag bad rows — do not delete; preserves audit trail |
+| **Alternative considered** | Separate quarantine tables |
+| **Why chosen** | Meets assignment with minimal object proliferation |
 
-| Column | Type | Purpose |
-|--------|------|---------|
-| `quality_check_result` | STRING | `PASS` or comma-separated failure codes (e.g., `COMPLETENESS,UNIQUENESS`) |
-| `is_valid` | BOOLEAN | `true` if `quality_check_result = 'PASS'` |
-| `_silver_processed_timestamp` | TIMESTAMP | When Silver processing ran |
+### 4.2 Bronze → Silver data flow
+
+1. Read full Bronze entity tables (all rows, all Bronze columns).
+2. Apply checks in dependency order; accumulate failure codes per row.
+3. Derive `is_valid`.
+4. Overwrite `silver.customers`, `silver.products`, `silver.orders` (full refresh).
+5. Append `silver.dq_metrics` (one batch of metric rows per `run_id`).
+6. Complete **all** checks in one run — row-level DQ failures are non-fatal; produce full DQ report.
+
+**Input prerequisites:** Bronze runtime-validated tables with row counts 10,000 / 500 / 100,000 and all 460 intentional defect rows preserved.
+
+### 4.3 Silver table names
+
+| Table | Schema | Source |
+|-------|--------|--------|
+| `silver.customers` | `silver` | `bronze.customers` |
+| `silver.products` | `silver` | `bronze.products` |
+| `silver.orders` | `silver` | `bronze.orders` |
+| `silver.dq_metrics` | `silver` | Derived per run |
+
+Format: **Delta Lake**. No partitioning (assessment scale ~110K rows).
+
+### 4.4 Schemas and preserved Bronze metadata
+
+Each Silver entity table = **all Bronze business columns (unchanged)** + **all Bronze metadata columns** + **Silver quality columns**.
+
+**Bronze business columns (preserved):**
+
+| Entity | Columns |
+|--------|---------|
+| customers | `customer_id`, `customer_name`, `email`, `country`, `signup_date`, `customer_segment`, `lifetime_value` |
+| products | `product_id`, `product_name`, `category`, `price`, `cost`, `stock_quantity`, `reorder_level` |
+| orders | `order_id`, `customer_id`, `order_date`, `product_id`, `quantity`, `unit_price`, `total_amount`, `order_status`, `payment_date` |
+
+**Bronze metadata (preserved):** `_ingest_timestamp`, `_source_file`, `_ingest_batch_id`
+
+Silver row counts must equal Bronze row counts per entity.
+
+### 4.5 Silver quality columns
+
+| Column | Type | Nullable | Purpose |
+|--------|------|----------|---------|
+| `quality_check_result` | STRING | No | `PASS` or comma-separated failure codes |
+| `is_valid` | BOOLEAN | No | `true` iff `quality_check_result = 'PASS'` |
+| `_silver_processed_timestamp` | TIMESTAMP | No | When Silver processing completed for this row |
 
 | | |
 |---|---|
 | **Decision** | Comma-separated failure codes in a single `quality_check_result` column |
-| **Reason** | Assignment mandates this column; simple string format supports multiple failures per row |
+| **Reason** | Assignment mandates this column; supports multiple failures per row |
 | **Alternative considered** | JSON array or one column per check |
-| **Why chosen** | Readable in SQL dashboards and tests without JSON parsing; sufficient for assessment scope |
+| **Why chosen** | Readable in SQL and tests without JSON parsing |
 
-### 4.4 Four quality checks (design resolution)
+### 4.6 DQ rules and scripts
 
-The assignment acceptance criteria require **four** checks. Repository structure lists five scripts. Design resolution:
+Five check scripts map to five failure-code categories. The assignment requires **four** mandatory checks; design resolution: fourth = **type validation**; fifth script = **business logic** (repo structure).
 
-| # | Check | Script | Scope |
-|---|-------|--------|-------|
-| 1 | **Completeness** | `01_quality_completeness.py` | NULL checks on `email` (customers), `customer_id` & `product_id` (orders) |
-| 2 | **Uniqueness** | `02_quality_uniqueness.py` | Duplicate `customer_id` in customers; duplicate `order_id` in orders |
-| 3 | **Type validation** | `03_quality_type_validation.py` | Valid enums, non-negative numerics, parseable dates *(4th mandatory check)* |
-| 4 | **Referential integrity** | `04_quality_referential_integrity.py` | `orders.customer_id` → customers; `orders.product_id` → products |
-| 5 | **Business logic** | `05_quality_business_logic.py` | `total_amount ≈ quantity × unit_price`; `Completed` orders should have `payment_date` *(repo structure; supports DQ depth)* |
+| # | Check | Script | Failure code | Mandatory |
+|---|-------|--------|--------------|-----------|
+| 1 | Completeness | `01_quality_completeness.py` | `COMPLETENESS` | Yes |
+| 2 | Uniqueness | `02_quality_uniqueness.py` | `UNIQUENESS` | Yes |
+| 3 | Type validation | `03_quality_type_validation.py` | `TYPE_VALIDATION` | Yes *(4th assignment check)* |
+| 4 | Referential integrity | `04_quality_referential_integrity.py` | `REFERENTIAL_INTEGRITY` | Yes |
+| 5 | Business logic | `05_quality_business_logic.py` | `BUSINESS_LOGIC` | Repo-required |
 
-| | |
-|---|---|
-| **Decision** | Fourth mandatory check = **type validation**; fifth script = **business logic** (implemented but reported separately in metrics) |
-| **Reason** | Resolves ambiguity between three narrative checks and four acceptance-criteria checks; aligns with repo filenames |
-| **Alternative considered** | Business logic as the fourth check; skip type validation |
-| **Why chosen** | Type validation catches realistic production issues (bad enums, negative prices); business logic is valuable but more opinionated — keeping both satisfies repo structure without conflating check categories |
+#### Completeness
 
-### 4.5 Uniqueness scope
+| Table | Rule | FAIL when |
+|-------|------|-----------|
+| `silver.customers` | `email IS NOT NULL` | `email IS NULL` |
+| `silver.orders` | Both FKs present | `customer_id IS NULL OR product_id IS NULL` |
 
-| | |
-|---|---|
-| **Decision** | `customer_id` uniqueness evaluated **only on `silver.customers`**; `order_id` uniqueness **only on `silver.orders`** |
-| **Reason** | `customer_id` is FK on orders — many orders per customer is expected |
-| **Alternative considered** | Global uniqueness on `customer_id` across all tables |
-| **Why chosen** | Would incorrectly flag valid order history |
+One `COMPLETENESS` code per failing row (even if both order FKs are NULL). No completeness rule on products.
 
-### 4.6 Duplicate row handling
+#### Uniqueness
 
-| | |
-|---|---|
-| **Decision** | Flag **all rows** participating in a duplicate key group as invalid (not just the second occurrence) |
-| **Reason** | Avoids silently choosing an arbitrary "survivor" row |
-| **Alternative considered** | Keep first occurrence, flag duplicates only |
-| **Why chosen** | Safer for audit; downstream Gold uses `is_valid = true` only |
+| Table | Key | Rule |
+|-------|-----|------|
+| `silver.customers` | `customer_id` | Unique within customers table |
+| `silver.orders` | `order_id` | Unique within orders table |
 
-### 4.7 Referential integrity
+`customer_id` on orders is **not** checked for uniqueness (valid FK repetition).
 
-- Build distinct valid key sets from **Silver customers/products** where `is_valid = true` on PK checks, **or** from Bronze parents before child checks — see check execution order in Section 10.
-- Orders with NULL `customer_id` / `product_id` fail completeness first; orphan checks apply only when FK is non-NULL.
+#### Type validation
 
-| | |
-|---|---|
-| **Decision** | Referential integrity runs **after** completeness and uniqueness on parent tables |
-| **Reason** | Parent duplicate PKs undermine FK validation |
-| **Alternative considered** | RI against Bronze parents directly |
-| **Why chosen** | Validates the curated Silver parent keys used by analytics |
+Uses fixed **`REFERENCE_DATE = 2026-08-15`** (matches data generation; see SD-06).
 
-### 4.8 Silver orchestration
+| Table | Column | Rule |
+|-------|--------|------|
+| customers | `customer_segment` | IN (`Premium`, `Standard`, `Basic`) |
+| customers | `signup_date` | `<= REFERENCE_DATE` |
+| customers | `lifetime_value` | `>= 0` |
+| orders | `order_status` | IN (`Pending`, `Completed`, `Cancelled`) |
+| orders | `order_date` | `<= REFERENCE_DATE` |
+| orders | `payment_date` (if not null) | `<= REFERENCE_DATE` |
+| orders | `quantity` | `>= 0` |
+| orders | `unit_price`, `total_amount` | `>= 0` |
+| products | `price`, `cost` | `>= 0` |
+| products | `stock_quantity`, `reorder_level` | `>= 0` |
 
-`create_silver_tables.py` executes checks in order:
+One `TYPE_VALIDATION` code per row if any type rule fails.
 
-1. Load Bronze → staging DataFrames
-2. Completeness → Uniqueness → Type validation → Referential integrity → Business logic
-3. Merge failure codes into `quality_check_result`
-4. Write Silver entity tables
-5. Compute and write `silver.dq_metrics`
+#### Referential integrity
+
+On `silver.orders` only. Parent key set = **distinct PK values from Bronze parent tables** (existence-based; SD-04).
+
+| FK | Parent | Rule |
+|----|--------|------|
+| `customer_id` | `bronze.customers` | When NOT NULL, must exist in parent `customer_id` set |
+| `product_id` | `bronze.products` | When NOT NULL, must exist in parent `product_id` set |
+
+NULL FKs skip RI for that column (completeness owns NULLs). Ghost IDs 90,001–90,050 and 901–930 are not in parents → RI failures.
+
+#### Business-rule validation
+
+| ID | Entity | Rule | FAIL when |
+|----|--------|------|-----------|
+| BR-01 | products | Margin | `price <= cost` |
+| BR-02 | orders | Amount arithmetic | `ABS(total_amount - quantity * unit_price) > 0.01` |
+| BR-03 | orders | Completed payment | `order_status = 'Completed' AND payment_date IS NULL` |
+| BR-04 | orders | Pending/Cancelled payment | `order_status IN ('Pending','Cancelled') AND payment_date IS NOT NULL` |
+| BR-05 | orders | Order after signup | Resolvable customer AND `order_date < customer_signup_date` |
+
+BR-05 uses internal `customer_signup_lookup` = `customer_id` → `MIN(signup_date)` from `bronze.customers` (SD-01). Lookup is for validation only; not written to Silver. Skipped when `customer_id` IS NULL or orphan.
+
+One `BUSINESS_LOGIC` code per row if any business rule fails.
+
+### 4.7 Intentional defect expectations
+
+From `DATA_GENERATION_NOTES.md` (generator and independent CSV validation confirmed):
+
+| # | Entity | Defect | Count | Expected code |
+|---|--------|--------|-------|---------------|
+| 1 | customers | NULL `email` | **50** | `COMPLETENESS` |
+| 2 | customers | Duplicate `customer_id` (5 pairs) | **10 participant rows** | `UNIQUENESS` |
+| 3 | orders | NULL `customer_id` | **100** | `COMPLETENESS` |
+| 4 | orders | NULL `product_id` | **200** | `COMPLETENESS` |
+| 5 | orders | Orphan `customer_id` (ghost 90,001–90,050) | **50** | `REFERENTIAL_INTEGRITY` |
+| 6 | orders | Orphan `product_id` (ghost 901–930) | **30** | `REFERENTIAL_INTEGRITY` |
+| 7 | orders | Duplicate `order_id` (10 pairs) | **20 participant rows** | `UNIQUENESS` |
+
+**Total explicit defect-participating rows: 460** (60 customers + 400 orders). **Products: 0 intentional defects.**
+
+Defect pools are disjoint per generator design. Rows may accumulate multiple codes when rules overlap.
+
+### 4.8 Duplicate-pair semantics
+
+| Entity | PK | Structure | Flagged rows |
+|--------|-----|-----------|--------------|
+| customers | `customer_id` | 5 duplicate keys × frequency 2 | **10** (all participants) |
+| orders | `order_id` | 10 duplicate keys × frequency 2 | **20** (all participants) |
+
+Algorithm: `GROUP BY pk HAVING COUNT(*) > 1`; flag `UNIQUENESS` on **all** rows in duplicate groups (SD-02). Do not deduplicate before measuring. Do not choose a survivor row.
+
+### 4.9 NULL handling
+
+| Principle | Implementation |
+|-----------|----------------|
+| Bronze NULLs preserved | No `coalesce`, `fillna`, or imputation |
+| Completeness | True SQL `IS NULL` on critical fields |
+| RI | NULL FK skipped (not treated as orphan) |
+| Business rules | NULL-aware predicates; skip when inputs missing |
+
+### 4.10 Multiple-failure canonical code ordering
+
+| State | `quality_check_result` value |
+|-------|------------------------------|
+| All checks pass | `PASS` |
+| One or more failures | Comma-separated codes in order: `COMPLETENESS`, `UNIQUENESS`, `TYPE_VALIDATION`, `REFERENTIAL_INTEGRITY`, `BUSINESS_LOGIC` (SD-09) |
+
+Each check category contributes at most one code per row. Metrics count pass/fail per check independently.
+
+### 4.11 `is_valid` semantics
+
+| Question | Decision |
+|----------|----------|
+| Does Silver contain all rows? | **Yes** — same counts as Bronze |
+| Are invalid rows removed? | **No** |
+| Valid row | `is_valid = true` / `quality_check_result = 'PASS'` |
+| Invalid row | Any failure code present; `is_valid = false` |
+| Gold relationship | Gold reads `silver.* WHERE is_valid = true` only |
+
+### 4.12 `silver.dq_metrics`
+
+**Schema** (per `data-model.md` §9.5):
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `run_id` | STRING | Pipeline run identifier |
+| `check_name` | STRING | e.g. `COMPLETENESS_CUSTOMERS` |
+| `entity` | STRING | `customers`, `orders`, or `products` |
+| `total_rows` | BIGINT | Rows evaluated |
+| `passed_rows` | BIGINT | Rows passing check |
+| `failed_rows` | BIGINT | Rows failing check |
+| `pass_pct` | DECIMAL(5,2) | Percentage passed |
+| `threshold_pct` | DECIMAL(5,2) | Required threshold |
+| `threshold_met` | BOOLEAN | Whether threshold met |
+| `run_timestamp` | TIMESTAMP | When metrics computed |
+
+**Grain:** one metric row per **`(run_id, entity, check_name)`** for checks configured on that entity.
+
+**Exactly 10 metric rows per complete Silver run:**
+
+| Entity | `check_name` values | Rows |
+|--------|---------------------|------|
+| `customers` | `COMPLETENESS_CUSTOMERS`, `UNIQUENESS_CUSTOMERS`, `TYPE_VALIDATION_CUSTOMERS` | 3 |
+| `products` | `TYPE_VALIDATION_PRODUCTS`, `BUSINESS_LOGIC_PRODUCTS` | 2 |
+| `orders` | `COMPLETENESS_ORDERS`, `UNIQUENESS_ORDERS`, `TYPE_VALIDATION_ORDERS`, `REFERENTIAL_INTEGRITY_ORDERS`, `BUSINESS_LOGIC_ORDERS` | 5 |
+| **Total** | | **10** |
+
+Row-level flags live on entity tables; aggregate pass rates live in `silver.dq_metrics`.
+
+### 4.13 Error handling
+
+| Error class | Behavior |
+|-------------|----------|
+| Bronze table missing / unreadable | **Fatal** — stop Silver pipeline |
+| Bronze row count ≠ expected | **Fatal** — structural integrity broken |
+| Row-level DQ failure | **Non-fatal** — flag row, continue all checks |
+| Delta write failure | **Fatal** — raise with table context |
+
+Silver does **not** fail-fast on first row-level DQ failure (unlike Bronze entity orchestrator).
+
+### 4.14 Rerun / idempotency
+
+| Object | Mode | Behavior |
+|--------|------|----------|
+| `silver.customers`, `silver.products`, `silver.orders` | Overwrite | Full refresh from Bronze each run |
+| `silver.dq_metrics` | Append | New rows per `run_id` (SD-03) |
+
+Re-running Silver on unchanged Bronze reproduces same flags (deterministic rules and fixed `REFERENCE_DATE`).
+
+### 4.15 Spark Connect restrictions
+
+Databricks Free Edition Serverless uses **Spark Connect**. Silver implementation must **not** use:
+
+- `spark._jvm`
+- `spark._jsc`
+- Hadoop `FileSystem` APIs
+
+Use DataFrame, SQL, and Delta APIs only (learned from Bronze runtime on Serverless).
+
+### 4.16 Databricks execution approach
+
+| Item | Value |
+|------|-------|
+| Environment | Databricks Free Edition, Serverless, Unity Catalog |
+| Bronze input | `bronze.customers`, `bronze.products`, `bronze.orders` |
+| Execution | Notebook or job; `sys.path` to `src/silver`; run `create_silver_tables.py` |
+| Catalog | Hive metastore / UC schemas: `bronze`, `silver` |
+
+### 4.17 Silver orchestration
+
+`create_silver_tables.py` executes:
+
+1. Validate Bronze row counts
+2. `bronze.customers` → completeness → uniqueness → type validation
+3. `bronze.products` → type validation → business logic (BR-01)
+4. Build Bronze parent key sets
+5. `bronze.orders` → completeness → uniqueness → type → RI → business logic
+6. Overwrite `silver.*` entity tables
+7. Append **10** `silver.dq_metrics` rows for `run_id`
+8. Print summary
+
+Recommended `src/silver/` layout: `config.py`, `dq_utils.py`, `01`–`05` quality scripts, `create_silver_tables.py`, `README.md`.
+
+### 4.18 Design decisions (SD-01–SD-10)
+
+| ID | Decision |
+|----|----------|
+| **SD-01** | BR-05 signup lookup: `MIN(signup_date)` per `customer_id` from Bronze (internal only) |
+| **SD-02** | Flag **all** rows in duplicate PK groups |
+| **SD-03** | `silver.dq_metrics` append with unique `run_id` per run |
+| **SD-04** | RI parent keys = distinct Bronze PKs (existence, not parent `is_valid`) |
+| **SD-05** | Fourth mandatory assignment check = **TYPE_VALIDATION** |
+| **SD-06** | **`REFERENCE_DATE = 2026-08-15`** for future-date type validation (not `current_date()`) |
+| **SD-07** | No completeness rule on products |
+| **SD-08** | `price > cost` = **BUSINESS_LOGIC** on products |
+| **SD-09** | Canonical failure-code order (Section 4.10) |
+| **SD-10** | **460** itemized defect rows are acceptance criteria; do not invent extras toward ~700 |
+
+### 4.19 Silver acceptance criteria
+
+Silver design is complete when this section and `src/silver/README.md` reflect the approved specification.
+
+Silver implementation is complete when:
+
+1. All Bronze rows appear in Silver with preserved business and metadata columns.
+2. All seven intentional defect types detectable at expected minimum counts (Section 4.7).
+3. `quality_check_result` and `is_valid` on every row.
+4. Exactly **10** `silver.dq_metrics` rows per `run_id`.
+5. No silent row drop or deduplication.
+6. Gold can filter `WHERE is_valid = true`.
+7. Five check scripts + `create_silver_tables.py` per repo structure.
+8. Spark Connect compatible (Section 4.15).
 
 ---
 
@@ -811,9 +1045,10 @@ No backwards flow. Gold never reads Bronze.
 | Completeness | orders | `customer_id`, `product_id IS NOT NULL` | `COMPLETENESS` | >99% pass |
 | Uniqueness | customers | `customer_id` unique | `UNIQUENESS` | 100% pass |
 | Uniqueness | orders | `order_id` unique | `UNIQUENESS` | 100% pass |
-| Type validation | all | Valid enums; dates parseable; prices/quantities ≥ 0 | `TYPE_VALIDATION` | >99% pass *(assumption, aligned with completeness tier)* |
-| Referential integrity | orders | FK exists in valid parent keys | `REFERENTIAL_INTEGRITY` | >99.9% pass |
-| Business logic | orders | `abs(total_amount - quantity*unit_price) < 0.01`; Completed → payment_date NOT NULL | `BUSINESS_LOGIC` | >99% pass *(assumption)* |
+| Type validation | all | Valid enums; non-negative numerics; dates `<= REFERENCE_DATE` (2026-08-15) | `TYPE_VALIDATION` | >99% pass *(assumption)* |
+| Referential integrity | orders | FK exists in Bronze parent PK sets | `REFERENTIAL_INTEGRITY` | >99.9% pass |
+| Business logic | products | `price > cost` | `BUSINESS_LOGIC` | >99% pass *(assumption)* |
+| Business logic | orders | Amount tolerance; payment_date rules; order_date >= signup_date | `BUSINESS_LOGIC` | >99% pass *(assumption)* |
 
 ### 10.2 Type validation detail
 
@@ -822,9 +1057,11 @@ No backwards flow. Gold never reads Bronze.
 | `customer_segment` | IN (`Premium`, `Standard`, `Basic`) |
 | `order_status` | IN (`Pending`, `Completed`, `Cancelled`) |
 | `quantity`, `unit_price`, `total_amount`, `price`, `cost` | `>= 0` |
-| `signup_date`, `order_date`, `payment_date` | Not in future *(assumption)* |
+| `signup_date`, `order_date`, `payment_date` | `<= REFERENCE_DATE` where `REFERENCE_DATE = 2026-08-15` (fixed; SD-06) |
 
 ### 10.3 Metrics report (`silver.dq_metrics`)
+
+**Grain:** one row per **`(run_id, entity, check_name)`** — **10 rows per complete Silver run** (3 customers + 2 products + 5 orders). See Section 4.12.
 
 | Column | Description |
 |--------|-------------|
