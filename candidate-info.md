@@ -37,4 +37,4 @@ Full setup: `README.md`
 | Silver | Complete + runtime validated |
 | Gold | Complete + runtime validated |
 | Dashboard | Complete (SQL + manual UI) |
-| Automated tests | Not implemented |
+| Automated tests | Implemented (`tests/test_data_quality.py`) |

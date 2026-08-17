@@ -28,7 +28,7 @@ Incremental implementation plan for Cursor-assisted development.
 - [x] Implement create_silver_tables.py
 - [x] Quality metrics report (silver.dq_metrics)
 - [x] Runtime validation in Databricks
-- [x] Data quality automated tests (manual runtime validation complete; pytest not implemented)
+- [x] Data quality automated tests (`tests/test_data_quality.py`)
 
 ## Phase 4: Gold
 
@@ -46,7 +46,7 @@ Incremental implementation plan for Cursor-assisted development.
 
 ## Phase 6: Testing & Documentation
 
-- [ ] Integration tests (pytest)
+- [x] Integration tests (pytest) — CSV DQ tests only; full pipeline integration not implemented
 - [x] README end-to-end setup
 - [x] AI workflow and reflection artifacts
 - [ ] Submission preparation (git commit/push + online form)

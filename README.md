@@ -16,7 +16,7 @@ Source CSVs → Bronze → Silver → Gold → Databricks SQL Dashboard
 | Gold | Complete + runtime validated |
 | Dashboard SQL & docs | Complete |
 | Databricks Dashboard UI | Complete (manual) |
-| Automated test suite | Not implemented |
+| Automated test suite | Implemented (`tests/test_data_quality.py`) |
 
 ## Prerequisites
 
@@ -75,6 +75,14 @@ gold_main()
 
 1. Create SQL queries from `src/dashboard/dashboard_queries.sql`
 2. Follow `src/dashboard/DASHBOARD_GUIDE.md` to configure the Databricks SQL Dashboard UI
+
+### 5. Run data quality tests (local)
+
+```bash
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Validates intentional defect counts in `data/*.csv` (see `tests/README.md`).
 
 ## Expected Runtime Row Counts
 

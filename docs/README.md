@@ -58,6 +58,6 @@ See `ai-prompts/README.md` for the full index.
 
 ## Test Strategy
 
-Automated tests are planned but not yet implemented. See `tests/README.md`.
+Automated tests: `tests/test_data_quality.py` validates seed CSV defect counts. See `tests/README.md`.
 
 Design-level testing strategy: `design-notes.md` — Testing Strategy section.

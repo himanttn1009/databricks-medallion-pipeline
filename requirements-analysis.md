@@ -771,7 +771,7 @@ Checklist derived from assignment core acceptance criteria and "what counts as c
 - [x] Dashboard displays all **3+** visualizations (9 widgets total)
 - [x] All code is readable, commented, documented
 - [x] README setup instructions work end-to-end
-- [ ] Data quality tests pass (automated pytest — not implemented; manual validation complete)
+- [x] Data quality tests pass (automated CSV defect tests in `tests/test_data_quality.py`)
 
 ### 18.2 Submission completeness
 
@@ -782,7 +782,7 @@ Checklist derived from assignment core acceptance criteria and "what counts as c
 - [x] Dashboard with 3+ SQL queries and visualizations
 - [x] Database schema/setup script and seed data
 - [x] README with working setup instructions
-- [ ] Basic test suite (data quality tests, pipeline integration tests)
+- [x] Basic test suite (data quality tests — `tests/test_data_quality.py`; pipeline integration tests not implemented)
 - [x] Full prompt history with all AI interactions documented
 - [x] Requirement analysis, design notes, test strategy
 - [x] Debugging notes and code review notes
@@ -795,7 +795,7 @@ Checklist derived from assignment core acceptance criteria and "what counts as c
 - [x] `final-ai-usage-summary.md` complete
 - [x] `ai-prompts/` — all 7 activity files with accept/reject reasoning
 - [x] `tool-specific/cursor-workflow/` — all 4 files
-- [ ] Evidence of iteration and validation in git history *(commit and push pending — local changes ready)*
+- [x] Evidence of iteration and validation in git history
 
 ### 18.4 Documentation artifacts
 
@@ -814,7 +814,7 @@ Checklist derived from assignment core acceptance criteria and "what counts as c
 - [x] Well-documented AI prompts with context and refinement
 - [x] Data quality thinking: checks work, report is clear, intentional issues caught
 - [x] Clean, maintainable code following naming conventions
-- [ ] Meaningful testing with debugging evidence (manual validation yes; automated tests no)
+- [x] Meaningful testing with debugging evidence (CSV data quality tests + manual Databricks validation)
 - [x] Honest reflection with trade-offs and reusable patterns
 
 ---
