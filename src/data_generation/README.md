@@ -2,20 +2,41 @@
 
 Sample CSV generator for the assessment pipeline.
 
-## Planned Files
+> **Status:** Implementation complete. Generator validated — CSVs produced with expected row counts and intentional quality issues.
+
+## Files
 
 | File | Purpose |
 |------|---------|
-| `generate_sample_data.py` | Python/PySpark script to create customers, orders, products CSVs with intentional quality issues |
+| `generate_sample_data.py` | Creates customers, orders, products CSVs with intentional quality issues |
+| `DATA_GENERATION_NOTES.md` | Generation approach, defect inventory, validation rules |
 
 ## Output
 
-Generated files will be written to `data/`:
+Generated files are written to `data/`:
 
-- `customers.csv` (10,000 rows)
-- `orders.csv` (100,000 rows)
-- `products.csv` (500 rows)
+| File | Rows |
+|------|------|
+| `customers.csv` | 10,000 |
+| `orders.csv` | 100,000 |
+| `products.csv` | 500 |
 
-## Notes
+## Run locally
 
-See `DATA_GENERATION_NOTES.md` for generation approach and quality issue documentation.
+```bash
+cd src/data_generation
+python generate_sample_data.py
+```
+
+The script runs `validate_generated_data()` before writing CSVs.
+
+## Key constants
+
+| Constant | Value |
+|----------|-------|
+| `REFERENCE_DATE` | 2026-08-15 |
+| Intentional defective rows | 460 total across seven defect types |
+
+## Next step
+
+Upload generated CSVs to the Databricks volume (see `src/bronze/README.md` and `database/seed-data-notes.md`).

@@ -1,6 +1,6 @@
 # Data Model
 
-> **Status:** Model defined. Bronze implemented and runtime-validated. **Silver design finalized**; Silver tables not yet implemented; Silver runtime validation not performed.  
+> **Status:** Model defined. All layers implemented and runtime-validated. Dashboard consumes Gold only.  
 > **Inputs:** `assignment/assignment-requirements.md`, `requirements-analysis.md`, `design-notes.md`  
 > **Companion docs:** `data-quality-strategy.md`, `database/schema.sql`, `src/silver/README.md`
 

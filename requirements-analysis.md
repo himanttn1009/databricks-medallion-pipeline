@@ -1,6 +1,6 @@
 # Requirement Analysis
 
-> **Status:** Analysis complete; pipeline not yet implemented or tested.  
+> **Status:** Analysis complete. Pipeline implemented and manually runtime-validated (Bronze → Silver → Gold → Dashboard). Automated tests not implemented.  
 > **Source of truth:** `assignment/assignment-requirements.md`  
 > **Engineering standards:** `.cursor/rules/project-engineering.mdc`
 
@@ -475,15 +475,17 @@ Must document:
 
 ### 12.2 Prompt history — `ai-prompts/` (CRITICAL)
 
-Seven activity files required:
+Seven activity files (layer history in numbered `04–08` files):
 
-- `data-generation.md`
-- `bronze-layer.md`
-- `silver-layer.md`
-- `gold-layer.md`
-- `dashboard.md`
+- `04-data-generation.md`
+- `05-bronze-layer.md`
+- `06-silver-layer.md`
+- `07-gold-layer.md`
+- `08-dashboard-layer.md`
 - `debugging.md`
 - `documentation.md`
+
+See `ai-prompts/README.md` for the index.
 
 Each must capture: prompt text (or summary), AI response summary, what was accepted/changed/rejected, and why.
 
@@ -756,65 +758,65 @@ The following items are **explicitly unresolved**. They must be decided and docu
 
 ## 18. Acceptance Criteria
 
-Checklist derived from assignment core acceptance criteria and "what counts as complete." **All items are pending — nothing verified yet.**
+Checklist derived from assignment core acceptance criteria and "what counts as complete." **Runtime-validated items marked complete; automated tests and personal submission fields remain pending.**
 
 ### 18.1 Core pipeline
 
-- [ ] Sample data generated: 3 CSVs with intentional quality issues
-- [ ] Bronze layer ingests all three sources successfully
-- [ ] Silver layer implements all **four** quality checks
-- [ ] Quality report shows **% passed** for each check
-- [ ] Gold layer produces all **three** aggregation tables
-- [ ] Aggregation calculations are correct (sum, count, avg, etc.)
-- [ ] Dashboard displays all **3+** visualizations
-- [ ] All code is readable, commented, documented
-- [ ] README setup instructions work end-to-end
-- [ ] Data quality tests pass (verify checks catch intentional issues)
+- [x] Sample data generated: 3 CSVs with intentional quality issues
+- [x] Bronze layer ingests all three sources successfully
+- [x] Silver layer implements all **four** quality checks (plus type validation as fifth category)
+- [x] Quality report shows **% passed** for each check (`silver.dq_metrics`)
+- [x] Gold layer produces all **three** assignment aggregation tables (+ fourth trends table)
+- [x] Aggregation calculations are correct (sum, count, avg, etc.) — runtime validated
+- [x] Dashboard displays all **3+** visualizations (9 widgets total)
+- [x] All code is readable, commented, documented
+- [x] README setup instructions work end-to-end
+- [ ] Data quality tests pass (automated pytest — not implemented; manual validation complete)
 
 ### 18.2 Submission completeness
 
-- [ ] Working end-to-end pipeline (Bronze → Silver → Gold → Dashboard)
-- [ ] Sample data generator with realistic quality issues
-- [ ] All four quality checks implemented and working
-- [ ] All three Gold layer aggregations
-- [ ] Dashboard with 3+ SQL queries and visualizations
-- [ ] Database schema/setup script and seed data
-- [ ] README with working setup instructions
+- [x] Working end-to-end pipeline (Bronze → Silver → Gold → Dashboard)
+- [x] Sample data generator with realistic quality issues
+- [x] All four quality checks implemented and working
+- [x] All three Gold layer aggregations (+ `daily_weekly_trends`)
+- [x] Dashboard with 3+ SQL queries and visualizations
+- [x] Database schema/setup script and seed data
+- [x] README with working setup instructions
 - [ ] Basic test suite (data quality tests, pipeline integration tests)
-- [ ] Full prompt history with all AI interactions documented
-- [ ] Requirement analysis, design notes, test strategy
-- [ ] Debugging notes and code review notes
-- [ ] Reflection on what was learned
+- [x] Full prompt history with all AI interactions documented
+- [x] Requirement analysis, design notes, test strategy
+- [x] Debugging notes and code review notes
+- [x] Reflection on what was learned
 
 ### 18.3 AI workflow artifacts
 
-- [ ] `tool-workflow.md` complete (Part A)
-- [ ] `reflection.md` complete (Part C)
-- [ ] `final-ai-usage-summary.md` complete
-- [ ] `ai-prompts/` — all 7 activity files with accept/reject reasoning
-- [ ] `tool-specific/cursor-workflow/` — all 4 files
-- [ ] Evidence of iteration and validation in git history
+- [x] `tool-workflow.md` complete (Part A)
+- [x] `reflection.md` complete (Part C)
+- [x] `final-ai-usage-summary.md` complete
+- [x] `ai-prompts/` — all 7 activity files with accept/reject reasoning
+- [x] `tool-specific/cursor-workflow/` — all 4 files
+- [ ] Evidence of iteration and validation in git history *(commit and push pending — local changes ready)*
 
 ### 18.4 Documentation artifacts
 
-- [ ] `candidate-info.md`
-- [ ] `design-notes.md`
-- [ ] `data-model.md`
-- [ ] `data-quality-strategy.md`
-- [ ] `DATA_GENERATION_NOTES.md`
-- [ ] `DASHBOARD_GUIDE.md`
-- [ ] `database/schema.sql`, `seed-data-notes.md`, `setup-notes.md`
-- [ ] Online submission form answers prepared
+- [x] `candidate-info.md`
+- [x] `design-notes.md`
+- [x] `data-model.md`
+- [x] `data-quality-strategy.md`
+- [x] `DATA_GENERATION_NOTES.md`
+- [x] `DASHBOARD_GUIDE.md`
+- [x] `database/schema.sql`, `seed-data-notes.md`, `setup-notes.md`
+- [ ] Online submission form answers prepared *(outside repository — complete on assessment portal)*
 
 ### 18.5 Quality indicators ("what good looks like")
 
-- [ ] Clear requirement understanding demonstrated
-- [ ] Well-documented AI prompts with context and refinement
-- [ ] Data quality thinking: checks work, report is clear, intentional issues caught
-- [ ] Clean, maintainable code following naming conventions
-- [ ] Meaningful testing with debugging evidence
-- [ ] Honest reflection with trade-offs and reusable patterns
+- [x] Clear requirement understanding demonstrated
+- [x] Well-documented AI prompts with context and refinement
+- [x] Data quality thinking: checks work, report is clear, intentional issues caught
+- [x] Clean, maintainable code following naming conventions
+- [ ] Meaningful testing with debugging evidence (manual validation yes; automated tests no)
+- [x] Honest reflection with trade-offs and reusable patterns
 
 ---
 
-*Document version: 1.0 — requirements analysis from assignment source; implementation and testing not started.*
+*Document version: 1.1 — requirements analysis from assignment source; pipeline implementation and manual runtime validation complete; automated tests not implemented.*

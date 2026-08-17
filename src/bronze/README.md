@@ -2,6 +2,8 @@
 
 Raw CSV ingestion into Delta Lake tables with minimal transformation. Bronze preserves source fidelity — all intentional data defects survive for Silver-layer quality processing.
 
+> **Status:** Implementation complete. **Runtime validated** — row counts 10,000 / 500 / 100,000 confirmed in Databricks.
+
 ## Overview
 
 ```

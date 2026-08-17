@@ -12,7 +12,7 @@ Design the Bronze layer for ingesting generated e-commerce CSV sources into Data
 | Implementation | Complete — Bronze layer code implemented (Interaction 2) |
 | Static code review | Complete — senior-level static review performed (Interaction 3) |
 | Review fixes | Complete — fail-fast orchestration and column-order validation (Interaction 4) |
-| Runtime validation | **Not performed** |
+| Runtime validation | **Complete** |
 
 ---
 
@@ -1042,3 +1042,51 @@ Fail-fast orchestration ensures a failed `ingest_all.py` run does not ingest rem
 | Static fix review | Complete — 13-item post-fix checklist; all PASS |
 | Databricks runtime execution | **Not performed** |
 | Bronze runtime success | **Must not be claimed** — ingest and audit behavior not verified in Databricks |
+
+---
+
+## Interaction 5 — Bronze Runtime Validation
+
+### Objective
+
+Execute Bronze ingest in Databricks and validate row counts and defect preservation.
+
+### Exact Prompt Sent
+
+No separate Cursor prompt — Bronze ingest executed in Databricks by user after uploading CSVs to Unity Catalog volume.
+
+### AI Response Summary
+
+Bronze ingest completed successfully. Observed row counts:
+
+| Table | Rows |
+|-------|------|
+| `bronze.customers` | 10,000 |
+| `bronze.products` | 500 |
+| `bronze.orders` | 100,000 |
+
+Intentional defects preserved for Silver (NULL emails, duplicate keys, orphan FKs, etc.). `audit.ingestion_log` records written per entity.
+
+### Files Changed
+
+None — runtime validation only.
+
+### Validation Status
+
+| Type | Status |
+|------|--------|
+| Databricks runtime execution | **Complete** |
+| Runtime validation | **Complete** |
+| Bronze runtime success | **Validated** |
+
+---
+
+## Overall Stage Status
+
+| Phase | Status |
+|-------|--------|
+| Design | Complete |
+| Implementation | Complete |
+| Static review + fixes | Complete |
+| Runtime validation | Complete |
+| Bronze runtime success | Validated |

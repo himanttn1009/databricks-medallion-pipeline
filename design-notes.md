@@ -1,6 +1,6 @@
 # Design Notes
 
-> **Status:** Bronze and Silver implemented and runtime-validated. **Gold layer design finalized** (§5); Gold implementation not started; Gold runtime validation not performed.  
+> **Status:** Full pipeline implemented and runtime-validated (Bronze → Silver → Gold → Dashboard).  
 > **Inputs:** `assignment/assignment-requirements.md`, `requirements-analysis.md`, `.cursor/rules/project-engineering.mdc`  
 > **Companion docs:** `data-model.md`, `data-quality-strategy.md`, `database/schema.sql`, `src/silver/README.md`, `src/gold/README.md`
 
@@ -112,7 +112,7 @@ A **batch medallion pipeline** on Databricks integrating three e-commerce CSV so
 
 ## Bronze Layer Design
 
-> **Status:** Design approved; not yet implemented or tested.  
+> **Status:** Implemented and runtime-validated.  
 > **Inputs:** Approved Bronze Layer Design Specification, `data-model.md`, `DATA_GENERATION_NOTES.md` (runtime validation results), assignment Bronze requirements.  
 > **Implementation:** `src/bronze/` (planned)
 
@@ -744,9 +744,7 @@ Silver implementation is complete when:
 
 ## 5. Gold Layer
 
-> **Status:** Design **finalized** (GD-01–GD-14).  
-> **Implementation:** Not started.  
-> **Runtime validation:** Not performed.  
+> **Status:** Design **finalized** (GD-01–GD-14). **Implementation complete.** **Runtime validation complete.**
 > **Inputs:** Assignment §8, validated Silver tables (`silver.customers` 10,000 / `silver.products` 500 / `silver.orders` 100,000), `data-model.md` §10.
 
 ### 5.1 Architecture and layer boundaries
@@ -976,15 +974,15 @@ DataFrame API, Spark SQL (`CREATE SCHEMA`), Delta `saveAsTable` only. **No** `sp
 
 ### 5.14 Gold acceptance criteria
 
-- [ ] Reads only from `silver.customers`, `silver.products`, `silver.orders`
-- [ ] Uses `is_valid = true` on Silver inputs
-- [ ] Revenue metrics use `order_status = 'Completed'` only
-- [ ] Three assignment tables match §8 columns and calculations
-- [ ] Fourth table `daily_weekly_trends` implemented (GD-06)
-- [ ] No Silver DQ logic duplicated; no Silver mutation
-- [ ] Delta overwrite; Spark Connect compatible
-- [ ] `create_gold_tables.py` orchestrates all four tables
-- [ ] Dashboard can query Gold without reading Silver
+- [x] Reads only from `silver.customers`, `silver.products`, `silver.orders`
+- [x] Uses `is_valid = true` on Silver inputs
+- [x] Revenue metrics use `order_status = 'Completed'` only
+- [x] Three assignment tables match §8 columns and calculations
+- [x] Fourth table `daily_weekly_trends` implemented (GD-06)
+- [x] No Silver DQ logic duplicated; no Silver mutation
+- [x] Delta overwrite; Spark Connect compatible
+- [x] `create_gold_tables.py` orchestrates all four tables
+- [x] Dashboard can query Gold without reading Silver
 
 ---
 
@@ -1019,15 +1017,14 @@ DataFrame API, Spark SQL (`CREATE SCHEMA`), Delta `saveAsTable` only. **No** `sp
 |--------|--------------|--------|
 | **Order date range** | Trends tile (and orders-backed logic if parameterized) | `gold.daily_weekly_trends` |
 | **Product category** | Top products tile | `gold.sales_by_product.category` |
-| **Customer segment** (Premium/Standard/Basic) | Revenue histogram | `gold.revenue_by_customer.customer_segment` |
-| **Country** | Revenue histogram | Join `silver.customers` at query time *(GD-07 — not denormalized into Gold)* |
+| **Customer segment** (Premium/Standard/Basic) | Revenue histogram, KPIs, detail table | `gold.revenue_by_customer.customer_segment` |
 
 | | |
 |---|---|
-| **Decision** | **Do not** add `country` to `gold.revenue_by_customer` (GD-07) |
-| **Reason** | Keep Gold schema assignment-aligned; `country` is not in assignment §8.B |
-| **Alternative considered** | Denormalize `country` into Gold during build (prior DA-12) |
-| **Why chosen** | Authoritative assignment schema takes precedence; dashboard can join Silver for country filter if needed |
+| **Decision** | **Do not** add `country` to `gold.revenue_by_customer` (GD-07); **do not** add a country dashboard filter |
+| **Reason** | Keep Gold schema assignment-aligned; dashboard is Gold-only (no Silver joins) |
+| **Alternative considered** | Denormalize `country` into Gold; join `silver.customers` at query time for country filter |
+| **Why chosen** | GD-07 + dashboard Gold-only contract; country filter rejected in dashboard design (DD-12) |
 
 > **Assumption:** Filter dimensions are not specified in assignment; above choices are design assumptions.
 
@@ -1537,11 +1534,11 @@ Deferring these aligns with assignment guidance: **do not expand pipeline comple
 | Document | Purpose |
 |----------|---------|
 | `requirements-analysis.md` | Requirements and ambiguities |
-| `data-model.md` | Detailed schemas *(to be updated to match this design)* |
-| `data-quality-strategy.md` | DQ rules, thresholds, metrics *(to be updated)* |
-| `database/schema.sql` | DDL for schemas and tables |
+| `data-model.md` | Detailed schemas |
+| `data-quality-strategy.md` | DQ rules, thresholds, metrics |
+| `database/schema.sql` | Schema/table reference |
 | `tool-specific/cursor-workflow/spec.md` | Cursor-facing specification summary |
 
 ---
 
-*Document version: 1.1 — Gold layer design finalized (GD-01–GD-14); Gold implementation and runtime validation not started.*
+*Document version: 1.2 — Full pipeline implemented and runtime-validated; automated tests not implemented.*

@@ -1,6 +1,6 @@
 # Data Quality Strategy
 
-> **Status:** Silver design **finalized** (see `design-notes.md` §4). Silver DQ checks **not yet implemented or executed**. Silver runtime validation **not performed**.  
+> **Status:** Silver design **finalized** and **implemented**. DQ checks executed and runtime-validated. Gold and Dashboard downstream complete.  
 > **Inputs:** `assignment/assignment-requirements.md`, `requirements-analysis.md`, `design-notes.md`, `data-model.md`  
 > **Implementation owner:** `src/silver/` (scripts `01`–`05`, `create_silver_tables.py`)
 
@@ -690,13 +690,13 @@ Persisted Delta table; **append** mode per `run_id` (SD-03). Entity tables use *
 | Item | Status |
 |------|--------|
 | Silver design | **Finalized** (`design-notes.md` §4) |
-| Silver DQ scripts | Not implemented |
+| Silver DQ scripts | **Implemented** (`src/silver/01–05`, `create_silver_tables.py`) |
 | Sample data with defects | Generated and validated (`DATA_GENERATION_NOTES.md`) |
 | Bronze layer | Implemented and runtime-validated |
-| DQ tests | Not written |
-| Silver runtime validation | **Not performed** |
-| Any Silver check executed | **No** |
-| Any Silver threshold verified | **No** |
+| DQ tests (automated) | Not written |
+| Silver runtime validation | **Complete** (run_id `a147c198-45cf-456e-9343-8763d7a75945`) |
+| Silver checks executed | **Yes** — 10 metrics per run |
+| Silver thresholds verified | **Yes** — uniqueness NOT MET expected for duplicate keys |
 
 ### 10.5 Spark Connect compatibility (Databricks Serverless)
 

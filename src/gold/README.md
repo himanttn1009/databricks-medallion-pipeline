@@ -2,8 +2,8 @@
 
 Business-ready aggregations for analytics consumption.
 
-> **Status:** Design finalized. **Implementation complete** (static verification only).  
-> **Runtime validation:** Not performed. No Gold runtime success is claimed.
+> **Status:** Design finalized. **Implementation complete.**  
+> **Runtime validation:** Complete — Gold tables verified in Databricks.
 
 ## Architecture
 
@@ -163,11 +163,20 @@ if exit_code != 0:
 ## Validation checklist
 
 - [x] Implementation modules created under `src/gold/`
-- [ ] Four Gold Delta tables written *(runtime not verified)*
-- [ ] Assignment §8.A–C columns and calculations correct *(runtime not verified)*
-- [ ] `daily_weekly_trends` with `DAILY` and `WEEKLY` rows *(runtime not verified)*
-- [ ] Only `is_valid = true` Silver rows used *(runtime not verified)*
-- [ ] Only `Completed` orders in revenue metrics *(runtime not verified)*
+- [x] Four Gold Delta tables written
+- [x] Assignment §8.A–C columns and calculations correct
+- [x] `daily_weekly_trends` with `DAILY` and `WEEKLY` rows (2,679 total)
+- [x] Only `is_valid = true` Silver rows used
+- [x] Only `Completed` orders in revenue metrics
 - [x] No Silver mutation or DQ re-implementation in code
 - [x] Spark Connect compatible (no JVM/Hadoop FS APIs in code)
-- [ ] Dashboard can query Gold without reading Silver *(downstream; not verified)*
+- [x] Dashboard can query Gold without reading Silver
+
+### Observed runtime row counts
+
+| Table | Rows |
+|-------|------|
+| `gold.sales_by_product` | 500 |
+| `gold.revenue_by_customer` | 9,940 |
+| `gold.customer_segmentation` | 4 |
+| `gold.daily_weekly_trends` | 2,679 |
