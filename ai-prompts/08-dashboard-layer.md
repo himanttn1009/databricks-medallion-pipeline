@@ -582,3 +582,55 @@ The Databricks SQL Dashboard UI was configured manually rather than generated th
 | Manual filter testing | Complete |
 | Runtime validation | Complete |
 | Final dashboard | Complete |
+
+---
+
+## Interaction 4 — Dashboard Export Artifact
+
+### Objective
+
+Export the validated Databricks SQL Dashboard as a `.lvdash.json` file for reproducible import and version control.
+
+### Exact Prompt Sent
+
+User exported the runtime dashboard from Databricks and added `E-Commerce Analytics Dashboard.lvdash.json` to `src/dashboard/`. Documentation updated to reference the export as the primary dashboard deliverable.
+
+### AI Response Summary
+
+Reviewed the export file. It contains:
+
+- **9 datasets** matching KPI-01–04, VIZ-01–04, TBL-01 — all query `gold.*` tables only
+- **9 widgets:** 4 counters, bar, histogram, pie, line, table
+- **1 global filter:** Product Category (associative multi-select on VIZ-01 and KPI-04 datasets)
+- **Dashboard name:** E-Commerce Analytics Dashboard
+
+Differences from `dashboard_queries.sql` documented:
+
+| Item | Export | `dashboard_queries.sql` |
+|------|--------|-------------------------|
+| Filters | Product Category only | 5 parameters (segment, category, period, dates) |
+| KPI-04 | `COUNT(product_id) GROUP BY category` | `COUNT(product_id)` with optional filter |
+| VIZ-04 | All periods; monthly aggregation in UI | `period_type` + date range in SQL |
+
+Updated `src/dashboard/README.md`, `DASHBOARD_GUIDE.md` §4 (import), root `README.md`, `candidate-info.md`.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/dashboard/README.md` | Export file, import instructions, filter mapping |
+| `src/dashboard/DASHBOARD_GUIDE.md` | Import section §4; export vs SQL comparison |
+| `README.md` | Import as recommended dashboard setup |
+| `candidate-info.md` | Setup step references export |
+| `ai-prompts/08-dashboard-layer.md` | This interaction |
+
+`E-Commerce Analytics Dashboard.lvdash.json` was added by user (Databricks export). No pipeline code modified.
+
+### Validation Status
+
+| Type | Status |
+|------|--------|
+| Dashboard export in repo | **Complete** |
+| Documentation updated | **Complete** |
+| Gold-only queries in export | **Verified** (all datasets read `gold.*`) |
+| Runtime validation | **Previously complete** (Interaction 3) |

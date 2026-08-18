@@ -24,7 +24,7 @@
 | 3 | Run Bronze ingest | `src/bronze/ingest_all.py` |
 | 4 | Run Silver DQ | `src/silver/create_silver_tables.py` |
 | 5 | Run Gold aggregations | `src/gold/create_gold_tables.py` |
-| 6 | Build dashboard manually | `src/dashboard/DASHBOARD_GUIDE.md` |
+| 6 | Import dashboard or build manually | `E-Commerce Analytics Dashboard.lvdash.json` or `DASHBOARD_GUIDE.md` |
 
 Full setup: `README.md`
 

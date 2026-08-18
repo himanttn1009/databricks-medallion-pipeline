@@ -71,10 +71,20 @@ from create_gold_tables import main as gold_main
 gold_main()
 ```
 
-### 4. Build the dashboard (manual)
+### 4. Build the dashboard
+
+**Option A — Import export (recommended):**
+
+1. In Databricks SQL → **Dashboards** → **Import dashboard**
+2. Upload `src/dashboard/E-Commerce Analytics Dashboard.lvdash.json`
+3. Verify Gold tables are accessible
+
+**Option B — Manual build:**
 
 1. Create SQL queries from `src/dashboard/dashboard_queries.sql`
-2. Follow `src/dashboard/DASHBOARD_GUIDE.md` to configure the Databricks SQL Dashboard UI
+2. Follow `src/dashboard/DASHBOARD_GUIDE.md`
+
+See `src/dashboard/README.md` for export vs parameterized SQL differences.
 
 ### 5. Run data quality tests (local)
 

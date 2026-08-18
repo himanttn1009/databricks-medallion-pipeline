@@ -1,10 +1,10 @@
 # Databricks SQL Dashboard Guide
 
-Manual setup guide for the E-Commerce Revenue Dashboard. Queries are versioned in `dashboard_queries.sql`; the dashboard UI is assembled manually in Databricks SQL.
+Manual setup guide for the E-Commerce Revenue Dashboard. Queries are versioned in `dashboard_queries.sql`; the validated dashboard UI is exported as `E-Commerce Analytics Dashboard.lvdash.json`.
 
 > **Dashboard design:** COMPLETE  
 > **Dashboard SQL implementation:** COMPLETE  
-> **Databricks Dashboard UI:** COMPLETE (manual)  
+> **Databricks Dashboard UI:** COMPLETE (`.lvdash.json` export)  
 > **Runtime validation:** COMPLETE (manual)
 
 ---
@@ -31,7 +31,7 @@ The dashboard consumes curated Gold tables produced by the medallion pipeline. I
 | Gold tables | `gold.sales_by_product`, `gold.revenue_by_customer`, `gold.customer_segmentation`, `gold.daily_weekly_trends` |
 | Gold pipeline | `create_gold_tables.py` completed successfully |
 | SQL warehouse | Running SQL warehouse or serverless SQL endpoint |
-| Repo files | `src/dashboard/dashboard_queries.sql` |
+| Repo files | `src/dashboard/dashboard_queries.sql`, `E-Commerce Analytics Dashboard.lvdash.json` |
 
 **Validated Gold baseline (reference only):**
 
@@ -57,7 +57,46 @@ The dashboard consumes curated Gold tables produced by the medallion pipeline. I
 
 ---
 
-## 4. How to create the Databricks SQL dashboard
+## 4. How to import the dashboard export (recommended)
+
+The file **`E-Commerce Analytics Dashboard.lvdash.json`** is a Databricks Lakeview dashboard export containing the runtime-validated dashboard configuration.
+
+### Import steps
+
+1. Open **Databricks** → **SQL** → **Dashboards**.
+2. Click **Import dashboard** (or **Create** → **Import**).
+3. Upload `src/dashboard/E-Commerce Analytics Dashboard.lvdash.json`.
+4. Name: `E-Commerce Analytics Dashboard` (or keep imported name).
+5. After import, open each dataset and **Run** once to confirm Gold table access.
+6. Open the **Global Filters** page and verify **Product Category** filter loads.
+
+### What the export contains
+
+| Component | Count | Details |
+|-----------|-------|---------|
+| Datasets | 9 | KPI-01 through KPI-04, VIZ-01 through VIZ-04, TBL-01 |
+| Widgets | 9 | 4 counters, bar, histogram, pie, line, table |
+| Global filters | 1 | Product Category (associative multi-select on VIZ-01 + KPI-04 datasets) |
+| Gold tables used | 4 | All queries read `gold.*` only |
+
+### Export vs `dashboard_queries.sql`
+
+| Topic | `.lvdash.json` export | `dashboard_queries.sql` |
+|-------|----------------------|-------------------------|
+| Purpose | Recreate validated Databricks UI | Parameterized SQL reference |
+| Filters | Product Category only (associative) | 5 parameters (`customer_segment`, `product_category`, `period_type`, dates) |
+| KPI-04 SQL | `COUNT(product_id) GROUP BY category` (counter sums across categories) | `COUNT(product_id)` with optional category filter |
+| VIZ-04 | All trend rows; line chart aggregates by month in UI | `period_type` + date range parameters in SQL |
+
+To add customer-segment or date filters, extend the imported dashboard using the parameterized SQL in `dashboard_queries.sql` (sections 15–16).
+
+> **Note:** Filter widget internal paths (`dashboards/01f198d45...`) are Databricks workspace IDs. They are rewritten on import; no manual edit needed.
+
+---
+
+## 5. How to create the dashboard manually (alternative)
+
+If you prefer not to import the JSON:
 
 1. Open **Databricks** → **SQL** → **Dashboards**.
 2. Click **Create dashboard**.
@@ -67,7 +106,7 @@ The dashboard consumes curated Gold tables produced by the medallion pipeline. I
 
 ---
 
-## 5. How to create each query
+## 6. How to create each query (manual build)
 
 For each widget below:
 
@@ -83,7 +122,7 @@ Repeat for all 9 queries.
 
 ---
 
-## 6. Query → visualization mapping
+## 7. Query → visualization mapping
 
 | Query ID | Visualization | Gold source |
 |----------|---------------|-------------|
@@ -99,7 +138,7 @@ Repeat for all 9 queries.
 
 ---
 
-## 7. Exact visualization type for each widget
+## 8. Exact visualization type for each widget
 
 | Widget | Databricks viz type |
 |--------|---------------------|
@@ -115,7 +154,7 @@ Repeat for all 9 queries.
 
 ---
 
-## 8. KPI configuration
+## 9. KPI configuration
 
 For each KPI query (KPI-01 through KPI-04):
 
@@ -130,7 +169,7 @@ For each KPI query (KPI-01 through KPI-04):
 
 ---
 
-## 9. Histogram configuration (VIZ-02)
+## 10. Histogram configuration (VIZ-02)
 
 1. Query: `VIZ-02` from `dashboard_queries.sql`.
 2. Visualization: **Histogram**.
@@ -141,7 +180,7 @@ For each KPI query (KPI-01 through KPI-04):
 
 ---
 
-## 10. Pie chart configuration (VIZ-03)
+## 11. Pie chart configuration (VIZ-03)
 
 1. Query: `VIZ-03` from `dashboard_queries.sql`.
 2. Visualization: **Pie chart**.
@@ -151,7 +190,7 @@ For each KPI query (KPI-01 through KPI-04):
 
 ---
 
-## 11. Bar chart configuration (VIZ-01)
+## 12. Bar chart configuration (VIZ-01)
 
 1. Query: `VIZ-01` from `dashboard_queries.sql`.
 2. Visualization: **Bar chart** (horizontal recommended for long product names).
@@ -163,7 +202,7 @@ For each KPI query (KPI-01 through KPI-04):
 
 ---
 
-## 12. Line chart configuration (VIZ-04)
+## 13. Line chart configuration (VIZ-04)
 
 1. Query: `VIZ-04` from `dashboard_queries.sql`.
 2. Visualization: **Line chart**.
@@ -174,7 +213,7 @@ For each KPI query (KPI-01 through KPI-04):
 
 ---
 
-## 13. Table configuration (TBL-01)
+## 14. Table configuration (TBL-01)
 
 1. Query: `TBL-01` from `dashboard_queries.sql`.
 2. Visualization: **Table**.
@@ -184,7 +223,7 @@ For each KPI query (KPI-01 through KPI-04):
 
 ---
 
-## 14. Dashboard layout
+## 15. Dashboard layout
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -208,7 +247,7 @@ Place the filter bar at the top or bottom of the dashboard.
 
 ---
 
-## 15. Parameter / filter creation
+## 16. Parameter / filter creation (manual / extended filters)
 
 Create these **dashboard-level parameters** in the Databricks SQL Dashboard UI:
 
@@ -236,7 +275,7 @@ Map each parameter to the queries listed in section 16.
 
 ---
 
-## 16. Parameter-to-query mapping
+## 17. Parameter-to-query mapping
 
 | Parameter | KPI-01 | KPI-02 | KPI-03 | KPI-04 | VIZ-01 | VIZ-02 | VIZ-03 | VIZ-04 | TBL-01 |
 |-----------|:------:|:------:|:------:|:------:|:------:|:------:|:------:|:------:|:------:|
@@ -254,7 +293,7 @@ KPI cards and customer/product charts use **lifetime Gold aggregates** from `gol
 
 ---
 
-## 17. Expected default values
+## 18. Expected default values
 
 | Parameter | Default |
 |-----------|---------|
@@ -275,7 +314,7 @@ KPI cards and customer/product charts use **lifetime Gold aggregates** from `gol
 
 ---
 
-## 18. Validation checklist
+## 19. Validation checklist
 
 After building the dashboard UI:
 
@@ -294,7 +333,7 @@ After building the dashboard UI:
 
 ---
 
-## 19. Troubleshooting
+## 20. Troubleshooting
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
@@ -308,7 +347,7 @@ After building the dashboard UI:
 
 ---
 
-## 20. Important Gold-only rule
+## 21. Important Gold-only rule
 
 The dashboard is the **consumption layer** for Gold analytics:
 
