@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import errno
 import random
 import sys
 from collections import Counter
@@ -712,7 +713,20 @@ def write_csv(path: Path, columns: tuple[str, ...], rows: list[dict[str, Any]]) 
             writer.writeheader()
             for row in rows:
                 writer.writerow({column: format_cell(row[column]) for column in columns})
-        temp_path.replace(path)
+        try:
+            temp_path.replace(path)
+        except OSError as exc:
+            # Databricks Unity Catalog Volumes can reject atomic rename/replace.
+            # Fall back to direct write to target path when operation isn't supported.
+            if exc.errno != errno.EOPNOTSUPP:
+                raise
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({column: format_cell(row[column]) for column in columns})
+            if temp_path.exists():
+                temp_path.unlink()
     except Exception:
         if temp_path.exists():
             temp_path.unlink()
