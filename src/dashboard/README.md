@@ -32,8 +32,10 @@ gold.daily_weekly_trends ─────┘         └── E-Commerce Analyti
 | File | Purpose |
 |------|---------|
 | `dashboard_queries.sql` | 9 parameterized widget queries (reference / manual build) |
+| `executive_insights_queries.sql` | 9 additional executive-insight queries (second dashboard variant) |
 | `E-Commerce Analytics Dashboard.lvdash.json` | **Databricks dashboard export** — import to recreate UI |
 | `DASHBOARD_GUIDE.md` | Setup guide (import + manual), viz config, filters, validation |
+| `EXECUTIVE_INSIGHTS_DASHBOARD_GUIDE.md` | Manual setup guide for second dashboard variant |
 | `README.md` | This overview |
 
 ## Widget inventory
@@ -85,6 +87,13 @@ Date filters affect **only** the revenue trend chart. KPI and customer/product w
 2. Open `dashboard_queries.sql` and create each query in Databricks SQL.
 3. Follow `DASHBOARD_GUIDE.md` to wire visualizations, layout, and parameters.
 4. Run the validation checklist in the guide.
+
+### Option C — Executive Insights dashboard (new)
+
+1. Create a new dashboard: `Executive Insights Dashboard`.
+2. Build queries from `executive_insights_queries.sql`.
+3. Follow `EXECUTIVE_INSIGHTS_DASHBOARD_GUIDE.md`.
+4. (Optional) Export as `.lvdash.json` after setup.
 
 ### Export vs SQL reference
 

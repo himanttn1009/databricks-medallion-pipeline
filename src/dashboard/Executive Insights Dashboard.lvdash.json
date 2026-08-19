@@ -1,0 +1,408 @@
+{
+  "datasets": [
+    {
+      "name": "ex_kpi_01",
+      "displayName": "EX-KPI-01 Revenue",
+      "queryLines": [
+        "SELECT ROUND(SUM(total_revenue), 2) AS total_revenue\n",
+        "FROM gold.revenue_by_customer;"
+      ]
+    },
+    {
+      "name": "ex_kpi_02",
+      "displayName": "EX-KPI-02 High-Value Customer Count",
+      "queryLines": [
+        "SELECT\n",
+        "  COUNT(*) AS total_orders\n",
+        "FROM gold.revenue_by_customer\n",
+        "WHERE total_orders >= 2\n",
+        "  AND total_revenue >= (\n",
+        "    SELECT percentile_approx(total_revenue, 0.75)\n",
+        "    FROM gold.revenue_by_customer\n",
+        "    WHERE total_orders >= 1\n",
+        "  );"
+      ]
+    },
+    {
+      "name": "ex_kpi_03",
+      "displayName": "EX-KPI-03 Inactive Customers",
+      "queryLines": [
+        "SELECT COUNT(*) AS customer_count\n",
+        "FROM gold.revenue_by_customer\n",
+        "WHERE total_orders = 0;"
+      ]
+    },
+    {
+      "name": "ex_kpi_04",
+      "displayName": "EX-KPI-04 Active Products",
+      "queryLines": [
+        "SELECT\n",
+        "  category,\n",
+        "  COUNT(product_id) AS product_count\n",
+        "FROM gold.sales_by_product\n",
+        "GROUP BY category\n",
+        "ORDER BY category;"
+      ]
+    },
+    {
+      "name": "ex_viz_01",
+      "displayName": "EX-VIZ-01 Top 10 Customers by Revenue",
+      "queryLines": [
+        "SELECT\n",
+        "  customer_name AS product_name,\n",
+        "  customer_segment AS category,\n",
+        "  total_revenue,\n",
+        "  total_orders\n",
+        "FROM gold.revenue_by_customer\n",
+        "ORDER BY total_revenue DESC, customer_name ASC\n",
+        "LIMIT 10;"
+      ]
+    },
+    {
+      "name": "ex_viz_02",
+      "displayName": "EX-VIZ-02 Avg Order Value Distribution",
+      "queryLines": [
+        "SELECT\n",
+        "  customer_id,\n",
+        "  customer_segment,\n",
+        "  COALESCE(avg_order_value, 0) AS total_revenue\n",
+        "FROM gold.revenue_by_customer;"
+      ]
+    },
+    {
+      "name": "ex_viz_03",
+      "displayName": "EX-VIZ-03 Behavioral Revenue Share",
+      "queryLines": [
+        "SELECT\n",
+        "  segment_type,\n",
+        "  customer_count,\n",
+        "  total_revenue,\n",
+        "  avg_revenue\n",
+        "FROM gold.customer_segmentation\n",
+        "ORDER BY\n",
+        "  CASE segment_type\n",
+        "    WHEN 'High-Value' THEN 1\n",
+        "    WHEN 'Repeat' THEN 2\n",
+        "    WHEN 'One-Time' THEN 3\n",
+        "    WHEN 'Inactive' THEN 4\n",
+        "    ELSE 5\n",
+        "  END;"
+      ]
+    },
+    {
+      "name": "ex_viz_04",
+      "displayName": "EX-VIZ-04 Revenue Trend",
+      "queryLines": [
+        "SELECT\n",
+        "  period_start,\n",
+        "  period_type,\n",
+        "  total_revenue,\n",
+        "  total_orders\n",
+        "FROM gold.daily_weekly_trends\n",
+        "ORDER BY period_start ASC;"
+      ]
+    },
+    {
+      "name": "ex_tbl_01",
+      "displayName": "EX-TBL-01 Customer Priority Table",
+      "queryLines": [
+        "SELECT\n",
+        "  customer_id,\n",
+        "  customer_name,\n",
+        "  customer_segment,\n",
+        "  total_orders,\n",
+        "  total_revenue,\n",
+        "  avg_order_value,\n",
+        "  lifetime_value_actual\n",
+        "FROM gold.revenue_by_customer\n",
+        "ORDER BY total_revenue DESC, customer_id ASC\n",
+        "LIMIT 500;"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "ex_dashboard_page",
+      "displayName": "Executive Insights Dashboard",
+      "layout": [
+        {
+          "widget": {
+            "name": "ex_total_revenue",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_kpi_01",
+                  "fields": [
+                    {
+                      "name": "sum(total_revenue)",
+                      "expression": "SUM(`total_revenue`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": { "showTitle": true, "title": "Revenue" },
+              "widgetType": "counter",
+              "encodings": { "value": { "fieldName": "sum(total_revenue)" } },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 0, "y": 0, "width": 3, "height": 2 }
+        },
+        {
+          "widget": {
+            "name": "ex_high_value_count",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_kpi_02",
+                  "fields": [
+                    { "name": "sum(total_orders)", "expression": "SUM(`total_orders`)" }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": { "showTitle": true, "title": "High-Value Customers" },
+              "widgetType": "counter",
+              "encodings": { "value": { "fieldName": "sum(total_orders)" } },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 3, "y": 0, "width": 3, "height": 2 }
+        },
+        {
+          "widget": {
+            "name": "ex_inactive_count",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_kpi_03",
+                  "fields": [
+                    { "name": "sum(customer_count)", "expression": "SUM(`customer_count`)" }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": { "showTitle": true, "title": "Inactive Customers" },
+              "widgetType": "counter",
+              "encodings": { "value": { "fieldName": "sum(customer_count)" } },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 6, "y": 0, "width": 3, "height": 2 }
+        },
+        {
+          "widget": {
+            "name": "ex_active_products",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_kpi_04",
+                  "fields": [
+                    { "name": "sum(product_count)", "expression": "SUM(`product_count`)" }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": { "showTitle": true, "title": "Active Products" },
+              "widgetType": "counter",
+              "encodings": { "value": { "fieldName": "sum(product_count)" } },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 9, "y": 0, "width": 3, "height": 2 }
+        },
+        {
+          "widget": {
+            "name": "ex_top_customers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_viz_01",
+                  "fields": [
+                    { "name": "category", "expression": "`category`" },
+                    { "name": "sum(total_revenue)", "expression": "SUM(`total_revenue`)" },
+                    { "name": "product_name", "expression": "`product_name`" }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": { "showTitle": true, "title": "Top 10 Customers by Revenue" },
+              "widgetType": "bar",
+              "encodings": {
+                "x": { "fieldName": "sum(total_revenue)", "scale": { "type": "quantitative" } },
+                "y": { "fieldName": "product_name", "scale": { "type": "categorical" } },
+                "color": { "fieldName": "category", "scale": { "type": "categorical" } }
+              },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 0, "y": 2, "width": 6, "height": 6 }
+        },
+        {
+          "widget": {
+            "name": "ex_aov_distribution",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_viz_02",
+                  "fields": [
+                    { "name": "customer_id", "expression": "`customer_id`" },
+                    { "name": "customer_segment", "expression": "`customer_segment`" },
+                    { "name": "sum(total_revenue)", "expression": "SUM(`total_revenue`)" }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": { "showTitle": true, "title": "Avg Order Value Distribution" },
+              "widgetType": "histogram",
+              "encodings": {
+                "x": { "fieldName": "customer_segment", "scale": { "type": "categorical" } },
+                "y": { "fieldName": "sum(total_revenue)", "scale": { "type": "quantitative" } },
+                "color": {
+                  "fieldName": "customer_id",
+                  "scale": { "type": "quantitative", "colorRamp": { "mode": "scheme", "scheme": "blues" } }
+                },
+                "label": { "show": false }
+              },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 6, "y": 2, "width": 6, "height": 6 }
+        },
+        {
+          "widget": {
+            "name": "ex_behavioral_share",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_viz_03",
+                  "fields": [
+                    { "name": "sum(customer_count)", "expression": "SUM(`customer_count`)" },
+                    { "name": "segment_type", "expression": "`segment_type`" }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": { "showTitle": true, "title": "Behavioral Segment Share" },
+              "widgetType": "pie",
+              "encodings": {
+                "angle": { "fieldName": "sum(customer_count)", "scale": { "type": "quantitative" } },
+                "color": { "fieldName": "segment_type", "scale": { "type": "categorical" } },
+                "label": { "show": true }
+              },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 0, "y": 8, "width": 6, "height": 6 }
+        },
+        {
+          "widget": {
+            "name": "ex_revenue_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_viz_04",
+                  "fields": [
+                    { "name": "monthly(period_start)", "expression": "DATE_TRUNC(\"MONTH\", `period_start`)" },
+                    { "name": "sum(total_revenue)", "expression": "SUM(`total_revenue`)" }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": { "showTitle": true, "title": "Revenue Trend" },
+              "widgetType": "line",
+              "encodings": {
+                "x": { "fieldName": "monthly(period_start)", "scale": { "type": "temporal" } },
+                "y": { "fieldName": "sum(total_revenue)", "scale": { "type": "quantitative" } }
+              },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 6, "y": 8, "width": 6, "height": 6 }
+        },
+        {
+          "widget": {
+            "name": "ex_priority_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ex_tbl_01",
+                  "fields": [
+                    { "name": "customer_id", "expression": "`customer_id`" },
+                    { "name": "customer_name", "expression": "`customer_name`" },
+                    { "name": "customer_segment", "expression": "`customer_segment`" },
+                    { "name": "total_orders", "expression": "`total_orders`" },
+                    { "name": "total_revenue", "expression": "`total_revenue`" },
+                    { "name": "avg_order_value", "expression": "`avg_order_value`" },
+                    { "name": "lifetime_value_actual", "expression": "`lifetime_value_actual`" }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": { "showTitle": true, "title": "Customer Priority Table" },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  { "fieldName": "customer_id" },
+                  { "fieldName": "customer_name" },
+                  { "fieldName": "customer_segment" },
+                  { "fieldName": "total_orders" },
+                  { "fieldName": "total_revenue" },
+                  { "fieldName": "avg_order_value" },
+                  { "fieldName": "lifetime_value_actual" }
+                ]
+              },
+              "data": { "queryName": "main_query" }
+            }
+          },
+          "position": { "x": 0, "y": 14, "width": 12, "height": 10 }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
