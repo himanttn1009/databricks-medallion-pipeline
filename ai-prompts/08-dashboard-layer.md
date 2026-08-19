@@ -578,6 +578,8 @@ The Databricks SQL Dashboard UI was configured manually rather than generated th
 | Design | Complete |
 | SQL / documentation implementation | Complete |
 | Databricks Dashboard UI | Complete (manual) |
+| Dashboard export artifact (`.lvdash.json`) | Complete |
+| Full pipeline automation notebook | Complete |
 | KPI / visualization / filter configuration | Complete |
 | Manual filter testing | Complete |
 | Runtime validation | Complete |
@@ -634,3 +636,66 @@ Updated `src/dashboard/README.md`, `DASHBOARD_GUIDE.md` §4 (import), root `READ
 | Documentation updated | **Complete** |
 | Gold-only queries in export | **Verified** (all datasets read `gold.*`) |
 | Runtime validation | **Previously complete** (Interaction 3) |
+
+---
+
+## Interaction 5 — Databricks Full-Run Automation + Executive Insights Dashboard
+
+### Objective
+
+Automate the end-to-end run experience so that a single Databricks notebook execution handles seed generation, Bronze/Silver/Gold processing, and validation checks, while also adding a second importable dashboard artifact for executive insights.
+
+### Exact Prompt Sent
+
+User requested one-click operation from Databricks with no manual local data upload, plus an additional `Executive Insights Dashboard.lvdash.json` that can be imported directly.
+
+### AI Response Summary
+
+Implemented and stabilized one-click orchestration in `notebooks/00_run_full_pipeline.ipynb`, then iteratively fixed Databricks environment constraints:
+
+1. Added optional seed generation (`regenerate_seed_data=true|false`) before layer execution.
+2. Added automatic dependency bootstrap for `Faker` when missing.
+3. Added stage-level PASS/FAIL summary and expected-vs-actual validation report.
+4. Added explicit Gold build step via `src/gold/create_gold_tables.py` before running `gold_runtime_validation`.
+5. Added robust handling for Databricks filesystem constraints discovered at runtime:
+   - `/Volumes/...` direct Python write not supported in this environment.
+   - `/dbfs/Volumes/...` direct Python write not supported in this environment.
+   - `file:/local_disk0/...` blocked by local filesystem policy.
+   - Final approach: generate CSVs under workspace repo path, then copy to volume via `dbutils.fs.cp`.
+
+Also added a second importable dashboard artifact:
+
+- `src/dashboard/Executive Insights Dashboard.lvdash.json`
+- Backed by `src/dashboard/executive_insights_queries.sql`
+- Gold-only dataset usage preserved.
+
+### Key Decisions
+
+| Decision | Outcome |
+|----------|---------|
+| One-click automation target | `notebooks/00_run_full_pipeline.ipynb` |
+| Seed generation toggle | `regenerate_seed_data` widget |
+| Dependency handling | Auto-install `Faker==40.36.0` when missing |
+| Gold-stage reliability | Explicit `create_gold_tables.py` call before validation notebook |
+| Filesystem compatibility | Workspace path generation + `dbutils.fs.cp` to volume |
+| Dashboard deliverable | Added second importable `.lvdash.json` |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `notebooks/00_run_full_pipeline.ipynb` | One-click automation + resilience updates |
+| `src/data_generation/generate_sample_data.py` | Volume-safe CSV write fallback |
+| `src/dashboard/executive_insights_queries.sql` | Query set finalized for executive dashboard |
+| `src/dashboard/Executive Insights Dashboard.lvdash.json` | Added importable dashboard artifact |
+| `src/dashboard/EXECUTIVE_INSIGHTS_DASHBOARD_GUIDE.md` | Added setup and mapping guide |
+| `src/dashboard/README.md` | Updated dashboard options/documentation references |
+
+### Validation Status
+
+| Type | Status |
+|------|--------|
+| Full-run notebook automation logic | **Complete** |
+| Runtime blocker diagnosis and fixes | **Complete** |
+| Executive dashboard export artifact | **Complete** |
+| Gold-only dashboard source rule | **Verified** |

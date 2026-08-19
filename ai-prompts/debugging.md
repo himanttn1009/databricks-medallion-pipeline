@@ -167,6 +167,62 @@ All 9 widgets and 5 filters PASS. KPI baseline matches Gold tables.
 
 ---
 
+## Interaction 5 — Databricks Automation Runtime Troubleshooting
+
+### Objective
+
+Stabilize one-click execution in `00_run_full_pipeline.ipynb` across Databricks runtime constraints and ensure end-to-end reliability.
+
+### Exact Prompt Sent
+
+User repeatedly requested fully automated execution from Databricks only (no manual local upload), then shared runtime stack traces as blockers appeared.
+
+### AI Response Summary
+
+Resolved multiple environment-specific failures in sequence:
+
+1. **`OSError: [Errno 95] Operation not supported` on `/Volumes/...`**
+   - Root cause: atomic replace/rename behavior unsupported in this runtime path.
+   - Fix: updated CSV write path handling and fallback logic.
+
+2. **`OSError: [Errno 95] Operation not supported` on `/dbfs/Volumes/...`**
+   - Root cause: direct Python file writes still restricted for that mount behavior.
+   - Fix: moved generation to workspace path and copy to volume via `dbutils.fs.cp`.
+
+3. **`LocalFilesystemAccessDeniedException` for `file:/local_disk0/...`**
+   - Root cause: policy denies non-Workspace local filesystem access.
+   - Fix: removed `/local_disk0` dependency; used `repo_path/data` workspace location instead.
+
+4. **Gold stage failure after cleanup**
+   - Root cause: validation notebook failed when Gold tables were not rebuilt first.
+   - Fix: explicit Gold table build (`create_gold_tables.py`) before `gold_runtime_validation`.
+
+### What I Accepted
+
+- Iterative runtime hardening using real Databricks trace evidence.
+- Workspace-path-first strategy for filesystem compatibility.
+- Explicit Gold build step in orchestrator notebook.
+
+### What I Rejected
+
+- Claiming success before rerun confirmation after each patch.
+- Reintroducing manual data upload as the primary path.
+
+### Why
+
+The assignment goal was one-click automation from Databricks. Runtime constraints varied by environment, so each fix needed to be trace-driven and minimal.
+
+### Changes Made
+
+- `notebooks/00_run_full_pipeline.ipynb`
+- `src/data_generation/generate_sample_data.py`
+
+### Validation
+
+Notebook logic now includes stage summaries, explicit Gold build, and compatibility-oriented file handling for constrained Databricks environments.
+
+---
+
 ## Consolidated Reference
 
 Full issue list with symptoms and resolutions: `debugging-notes.md`
