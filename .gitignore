@@ -9,10 +9,12 @@ build/
 .mypy_cache/
 .ruff_cache/
 
-# Virtual environments
+# Virtual environments (never commit local envs)
+.venv
 .venv/
 venv/
 env/
+ENV/
 
 # IDE / OS
 .idea/
